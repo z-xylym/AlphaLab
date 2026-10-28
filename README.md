@@ -24,6 +24,8 @@ streamlit run app.py
 
 配置也可通过同名环境变量提供，环境变量优先；应用不自动加载 `.env`。数据库必须是 PostgreSQL。远程连接强制校验证书 `sslmode=verify-full`；生产数据不写本地文件，不支持 SQLite 替代。`APP_SECRET_KEY` 至少32随机字符，用 `python -c "import secrets; print(secrets.token_hex(32))"` 在你自己的安全终端生成。
 
+**已用Supabase SQL Editor建好表、希望不用安装Python？** 请按 [GitHub网页初始化管理员](docs/ADMIN_BOOTSTRAP.md) 操作。真实密码仅填GitHub加密Secrets，工作流只检查现有库并创建首位管理员。
+
 管理员初始化后：登录 → 我的 → 管理后台 → 指定手机号生成邀请码 → 受邀人通过邀请码设置12～128字符密码。邀请码3天有效，仅显示一次。手机号并未短信验证，不能代表号码所有权；丢失密码需可信管理员另行安全处理，V1不提供短信找回。
 
 ## 功能入口
