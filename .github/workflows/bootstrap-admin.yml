@@ -1,0 +1,45 @@
+name: Initialize first administrator
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type INITIALIZE to initialize the first administrator (existing admin is preserved)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alphalab-production-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    if: github.ref == 'refs/heads/main' && inputs.confirmation == 'INITIALIZE'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted main revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies (without production secrets)
+        run: python -m pip install -r requirements.txt
+      - name: Check existing schema and initialize administrator
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APP_SECRET_KEY: ${{ secrets.APP_SECRET_KEY }}
+          ADMIN_PHONE: ${{ secrets.ADMIN_PHONE }}
+          ADMIN_INITIAL_PASSWORD: ${{ secrets.ADMIN_INITIAL_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m scripts.manage check
+          python -m scripts.manage bootstrap
+          python -m scripts.manage admin-check

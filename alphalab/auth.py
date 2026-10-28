@@ -44,14 +44,14 @@ class Auth:
         with self.db.begin() as conn:
             return dict(self.principal(conn, token))
     def bootstrap(self):
-        phone = phone_number(self.settings.admin_phone)
-        password = password_ok(self.settings.admin_initial_password)
-        if password.lower() in ('change_me', 'change_me_now', 'your_password'):
-            raise UserError('请设置独立的管理员强密码。')
         with self.db.begin() as conn:
             lock(conn, 'bootstrap')
             if conn.scalar(select(func.count()).select_from(users).where(users.c.is_admin.is_(True))):
                 return False
+            phone = phone_number(self.settings.admin_phone)
+            password = password_ok(self.settings.admin_initial_password)
+            if password.lower() in ('change_me', 'change_me_now', 'your_password'):
+                raise UserError('请设置独立的管理员强密码。')
             if conn.scalar(select(users.c.id).where(users.c.phone == phone)):
                 raise UserError('该手机号已存在，初始化不会提升已有用户权限。')
             conn.execute(insert(users).values(phone=phone, password_hash=hasher.hash(password), is_admin=True,

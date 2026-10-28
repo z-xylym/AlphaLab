@@ -1,13 +1,13 @@
-"""Run from the repository: python -m scripts.manage migrate|bootstrap|check"""
+"""Run from the repository: python -m scripts.manage migrate|bootstrap|check|admin-check"""
 import argparse
-from sqlalchemy import text
+from sqlalchemy import text, select
 from alphalab.config import Settings
-from alphalab.db import engine, metadata, lock
+from alphalab.db import engine, metadata, lock, users
 from alphalab.auth import Auth
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('command', choices=['migrate', 'bootstrap', 'check'])
+    p.add_argument('command', choices=['migrate', 'bootstrap', 'check', 'admin-check'])
     args = p.parse_args()
     try:
         import streamlit as st
@@ -26,9 +26,16 @@ def main():
             print('Database schema v1 ready; existing records preserved.')
         elif args.command == 'bootstrap':
             print('Admin created.' if Auth(settings).bootstrap() else 'Admin already exists; unchanged.')
+        elif args.command == 'admin-check':
+            with db.connect() as c:
+                admins = c.execute(select(users.c.password_hash, users.c.enabled).where(users.c.is_admin.is_(True))).mappings().all()
+            if not admins or not any(row['enabled'] and row['password_hash'].startswith('$argon2id$') for row in admins):
+                raise RuntimeError('No enabled Argon2id administrator')
+            print('Admin ready: enabled account with Argon2id password hash. No credentials displayed.')
         else:
             with db.connect() as c:
-                assert c.scalar(text('SELECT version FROM schema_migrations WHERE version=1')) == 1
+                if c.scalar(text('SELECT version FROM schema_migrations WHERE version=1')) != 1:
+                    raise RuntimeError('Schema v1 is not recorded')
             print('Database schema v1 reachable.')
     except Exception as exc:
         print('Operation failed:', type(exc).__name__, 'Check configuration/database access; no secret values printed.')
