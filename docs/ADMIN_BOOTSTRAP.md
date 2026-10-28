@@ -81,6 +81,8 @@ SELECT count(*) AS administrator_count FROM public.users WHERE is_admin = true;
 
 ## 4. 运行失败怎么办
 
+遇到OperationalError时，优先按 [安全数据库连接诊断](DATABASE_DIAGNOSTICS.md) 运行DIAGNOSE只读模式。它不会初始化管理员，只输出固定类别和建议；无需反复重置密码。
+
 红色不是成功，不要反复更改或重跑建表SQL。失败日志只显示异常类型：
 
 - `check`失败：确认连接URL、数据库项目是否暂停、Session pooler主机/端口、密码编码、TLS根证书和Supabase网络限制；无需发送真实URL。
