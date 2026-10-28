@@ -1,0 +1,20 @@
+.block-container {max-width:1040px;padding:1.5rem 1rem 3rem;}
+h1 {font-size:2rem!important;letter-spacing:-.04em;}
+h2 {font-size:1.35rem!important;}
+h3 {font-size:1.1rem!important;}
+.stApp {background:#F7F8FA;}
+[data-testid="stMetric"] {background:white;border:1px solid #E8EDF2;border-radius:14px;padding:16px;}
+[data-testid="stMetricValue"] {font-size:1.5rem;}
+.stButton>button,.stFormSubmitButton>button {min-height:44px;border-radius:10px;}
+[data-testid="stVerticalBlockBorderWrapper"] {border-radius:14px;}
+p,li, [data-testid="stMarkdownContainer"] {overflow-wrap:anywhere;}
+a {color:#244B78;}
+@media(max-width:600px){
+.block-container {padding:1rem .75rem 2rem;}
+[data-testid="stHorizontalBlock"] {flex-wrap:wrap;gap:.6rem;}
+[data-testid="stHorizontalBlock"]>[data-testid="stColumn"] {min-width:100%!important;width:100%!important;}
+h1 {font-size:1.7rem!important;}
+[data-testid="stMetricValue"] {font-size:1.35rem;}
+[data-testid="stTabs"] [role="tablist"] {flex-wrap:wrap;}
+[data-testid="stTabs"] [role="tab"] {min-height:44px;}
+}

@@ -1,0 +1,11 @@
+streamlit==1.50.0
+SQLAlchemy==2.0.44
+psycopg[binary]==3.2.12
+argon2-cffi==25.1.0
+httpx==0.28.1
+akshare==1.18.64
+pandas==2.3.3
+numpy==2.3.4
+plotly==6.3.1
+beautifulsoup4==4.14.2
+pytest==8.4.2
