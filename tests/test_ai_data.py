@@ -113,6 +113,10 @@ def test_official_policy_html_and_full_text(system,monkeypatch):
         return httpx.Response(200,content=html.encode(),headers={'content-type':'text/html; charset=utf-8'})
     monkeypatch.setattr(httpx,'Client',lambda **kw:original(transport=httpx.MockTransport(respond),**kw))
     data=MarketData(auth.db)
+    from alphalab import provider
+    from alphalab.data import fetch_policy_index
+    import pandas as pd
+    monkeypatch.setattr(provider,'call',lambda *a,**k:pd.DataFrame(fetch_policy_index()['items']))
     index=data.policies()
     assert len(index['items'])==1 and index['items'][0]['status']=='征求意见'
     full=data.policy_detail(index['items'][0]['url'])

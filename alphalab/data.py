@@ -28,6 +28,28 @@ def number(value):
     except (ValueError, TypeError):
         return None
 
+def fetch_policy_index():
+    url='https://www.gov.cn/zhengce/zuixin/'
+    with httpx.Client(timeout=httpx.Timeout(5,connect=3), follow_redirects=False) as client:
+        r=client.get(url)
+        r.raise_for_status()
+    soup=BeautifulSoup(r.content, 'html.parser')
+    items=[]
+    for li in soup.select('li'):
+        a=li.find('a',href=True)
+        if not a:
+            continue
+        link=urljoin(url,a['href'])
+        title=a.get_text(' ',strip=True)
+        date=re.search(r'20\d{2}[-/]\d{2}[-/]\d{2}',li.get_text(' ',strip=True))
+        if urlparse(link).hostname!='www.gov.cn' or not date or len(title)<8:
+            continue
+        items.append({'title':title,'url':link,'published_at':date.group(0),
+            'publisher':'中国政府网（汇总入口；具体发文部门请核对原文）',
+            'status':'征求意见' if '征求意见' in title else '待核对原文',
+            'content':'请打开官方原文核对具体措施，标题不构成完整政策依据。'})
+    return {'items':items[:20], 'date_note':'官方政策索引；未抓取全文的条目不可作已验证影响分析。'}
+
 class MarketData:
     def __init__(self, db):
         self.db = db
@@ -45,7 +67,7 @@ class MarketData:
             except Exception:
                 if row:
                     return {**row['payload'], 'fetched_at': row['fetched_at'].isoformat(), 'stale': True, 'source': row['source']}
-                raise DataUnavailable('数据源暂不可用，且没有历史缓存。请稍后重试。') from None
+                raise DataUnavailable('数据源暂不可用，且没有历史缓存；未生成替代数据。失败请求会短暂冷却，请约一分钟后再试；管理员可在管理后台诊断。') from None
             fetched = now()
             stmt = insert(cache).values(key=key, payload=payload, source=source, fetched_at=fetched, expires_at=fetched + timedelta(seconds=ttl))
             c.execute(stmt.on_conflict_do_update(index_elements=['key'], set_={
@@ -126,21 +148,9 @@ class MarketData:
         return self.cached('company:'+code, 86400, '东方财富公司资料（AKShare）', load)
     def financials(self, code):
         def load():
-            # Select the correct exchange explicitly (some upstream wrappers assume sh).
-            symbol=('sh' if code.startswith('6') else 'sz' if code.startswith(('0','3')) else 'bj')+code
-            with httpx.Client(timeout=20) as client:
-                response=client.get('https://quotes.sina.cn/cn/api/openapi.php/CompanyFinanceService.getFinanceReport2022',
-                    params={'paperCode':symbol,'source':'gjzb','type':'0','page':'1','num':'8'})
-                response.raise_for_status()
-            reports=response.json()['result']['data']['report_list']
-            metrics={}
-            for period, report in reports.items():
-                for item in report['data']:
-                    label=item['item_title']
-                    value=number(item.get('item_value'))
-                    if value is not None:
-                        metrics.setdefault(label,{'指标':label})[period]=value
-            return {'items':list(metrics.values()), 'code':code,
+            from .provider import call
+            df=call('sina_financial_summary',symbol=code)
+            return {'items':records(df), 'code':code,
                     'date_note':'按原始报表期展示；报表期不等于公告日。禁止用于历史财务选股回测。'}
         return self.cached('financial:'+code, 21600, '新浪财务摘要（AKShare）', load)
     def sectors(self, concept=False):
@@ -160,26 +170,9 @@ class MarketData:
         return self.cached('members:'+str(concept)+':'+name, 1800, '东方财富板块成分（AKShare）', load)
     def policies(self):
         def load():
-            url='https://www.gov.cn/zhengce/zuixin/'
-            with httpx.Client(timeout=20, follow_redirects=False) as client:
-                r=client.get(url)
-                r.raise_for_status()
-            soup=BeautifulSoup(r.content, 'html.parser')
-            items=[]
-            for li in soup.select('li'):
-                a=li.find('a',href=True)
-                if not a:
-                    continue
-                link=urljoin(url,a['href'])
-                title=a.get_text(' ',strip=True)
-                date=re.search(r'20\d{2}[-/]\d{2}[-/]\d{2}',li.get_text(' ',strip=True))
-                if urlparse(link).hostname!='www.gov.cn' or not date or len(title)<8:
-                    continue
-                items.append({'title':title,'url':link,'published_at':date.group(0),
-                    'publisher':'中国政府网（汇总入口；具体发文部门请核对原文）',
-                    'status':'征求意见' if '征求意见' in title else '待核对原文',
-                    'content':'请打开官方原文核对具体措施，标题不构成完整政策依据。'})
-            return {'items':items[:20], 'date_note':'官方政策索引；未抓取全文的条目不可作已验证影响分析。'}
+            from .provider import call
+            return {'items':records(call('government_policy_index')),
+                    'date_note':'官方政策索引；未抓取全文的条目不可作已验证影响分析。'}
         return self.cached('policies:v1', 3600, 'https://www.gov.cn/zhengce/zuixin/', load, 'policies')
     @staticmethod
     def compact_financials(data):
@@ -252,3 +245,17 @@ class MarketData:
                 if label in options:
                     result[name]={'value':number(row[dates[0]]),'report_date':dates[0]}
         return result
+
+
+def read_home_sections(data):
+    """Independent public reads only. No Streamlit API calls from worker threads."""
+    from concurrent.futures import ThreadPoolExecutor
+    import time
+    def read(name):
+        start=time.monotonic()
+        try:result=getattr(data,name)()
+        except Exception as exc:result=exc
+        return {'result':result,'elapsed_seconds':round(time.monotonic()-start,3)}
+    names=('indices','spot','policies')
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        return dict(zip(names,executor.map(read,names)))
