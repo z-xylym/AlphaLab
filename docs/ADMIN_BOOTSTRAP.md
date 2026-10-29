@@ -2,6 +2,8 @@
 
 你已在Supabase SQL Editor成功执行完整 `001_initial.sql`，接下来**不必重新建库、清表或重跑迁移**。推荐先用GitHub Actions运行一次性命令，再部署Community Cloud。整个过程只需要浏览器，不需要自己的服务器，也不需要把密码发给Codex。
 
+如果显式CA验证已经成功、管理员初始化仍报TLS错误，请按 [显式CA管理员初始化](ADMIN_BOOTSTRAP_CA.md) 运行更新后的初始化链路；无需修改现有Secrets。
+
 ## 先合并本次更新
 
 将包含 `.github/workflows/bootstrap-admin.yml` 的PR合并到 **main**。手动工作流只有进入默认分支后才会出现在Actions页面。不要使用别人未经审核的分支运行生产Secrets。
