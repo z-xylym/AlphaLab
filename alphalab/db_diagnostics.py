@@ -17,6 +17,8 @@ ADVICE = {
     'NETWORK_ERROR': '核对5432端口、项目是否暂停、Supabase数据库网络限制及GitHub runner出站网络；不要关闭全部网络限制。',
     'AUTHENTICATION_ERROR': '核对Session pooler用户名中的项目标识和Secret中的密码URL编码；认证失败不等于必须重置密码。',
     'DATABASE_NOT_FOUND': '在Connect面板核对数据库名；不要新建或删除数据库来试错。',
+    'TLS_CA_CONFIGURATION_ERROR': '请从Supabase项目SSL Configuration下载官方CA，放入certs/supabase-ca.crt或配置SUPABASE_CA_CERT；需有效PEM CA，不能上传私钥或回退system。',
+    'TLS_HOSTNAME_MISMATCH': 'CA校验与主机身份是独立要求：请核对该项目Connect面板的Session pooler主机；不得更换为证书中的任意主机、修改hostaddr或关闭verify-full。',
     'TLS_CERTIFICATE_ERROR': '保留sslmode=verify-full；核对pooler主机名与证书，并使用Supabase官方根CA修复信任链。',
     'TLS_CONFIGURATION_ERROR': '保留verify-full；sslrootcert=system依赖客户端系统CA。自定义CA路径必须存在且来自Supabase官方，不能关闭校验。',
     'SCHEMA_VERSION_ERROR': '数据库已连接，但无法读取public.schema_migrations中的version=1；只读检查版本、表权限和原SQL是否完整提交，不重跑建表或盲目补版本。',
@@ -64,6 +66,8 @@ def classify_error(exc):
     if any(isinstance(e, socket.gaierror) for e in errors) or any(s in message for s in (
             'could not translate host name', 'name or service not known', 'temporary failure in name resolution', 'nodename nor servname')):
         return Diagnosis('DNS_ERROR')
+    if any(s in message for s in ('does not match host name', 'hostname mismatch', 'host name does not match')):
+        return Diagnosis('TLS_HOSTNAME_MISMATCH')
     if any(s in message for s in ('certificate verify failed', 'certificate verification failed',
             'does not match host name', 'hostname mismatch', 'self-signed certificate', 'unable to get local issuer certificate', 'certificate has expired')):
         return Diagnosis('TLS_CERTIFICATE_ERROR')

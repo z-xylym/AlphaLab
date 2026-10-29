@@ -22,7 +22,7 @@ URL = 'postgresql+psycopg://postgres.project:' + SECRET + '@aws-region.pooler.su
     ('connection timed out '+SECRET, None, 'NETWORK_ERROR'),
     ('Network is unreachable '+SECRET, None, 'NETWORK_ERROR'),
     ('certificate verify failed '+SECRET, None, 'TLS_CERTIFICATE_ERROR'),
-    ('server certificate does not match host name '+SECRET, None, 'TLS_CERTIFICATE_ERROR'),
+    ('server certificate does not match host name '+SECRET, None, 'TLS_HOSTNAME_MISMATCH'),
     ('root certificate file "'+SECRET+'" does not exist', None, 'TLS_CONFIGURATION_ERROR'),
     ('unexpected error '+SECRET, None, 'OTHER_CONNECTION_ERROR'),
 ])
