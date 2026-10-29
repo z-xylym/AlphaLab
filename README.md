@@ -8,6 +8,8 @@
 
 生产已验证新浪日线/财务和主营、但快照失败时，请按 [生产核心研究链修复与验收](docs/PRODUCTION_DATA_REPAIR.md) 操作。股票检索与快照分离，首页改为缓存优先和明确手动刷新。
 
+第一轮界面产品化、缓存优先交互、浏览器截图与本地耗时记录见 [私人投研终端验收](docs/UI_TERMINAL.md)。
+
 正式部署且已有管理员时，请按 [应用运行时显式CA与Community Cloud部署](docs/RUNTIME_DEPLOYMENT.md) 配置，不要重复初始化数据库或管理员。
 
 Python **3.12**，从仓库根目录执行：
@@ -34,10 +36,10 @@ streamlit run app.py
 
 ## 功能入口
 
-- **首页**：最近发布的指数日线、A股快照、官方政策索引、手动生成市场简报。
+- **首页**：市场概览、个人自选/最近研究、最多3条政策观察；快照为次级信息。
 - **行业**：东方财富行业口径与投资主题分开选择；成分股、关注行业、AI解释和官方原文分析。
 - **选股**：风险警示、上市时间、流动性、数据完整性过滤；低估值、质量、实验短期动量；结果长期保存。
-- **个股**：名称/代码/关键词搜索、公司资料、主营构成、不复权历史图、财务摘要、PE/PB、研究报告和自选。
+- **个股**：独立名单搜索，公司Header与概览/走势/财务/主营/AI研究分页；只读已有缓存，手动更新研究数据。
 - **我的**：手动持仓增改删和集中度、聊天和长期记忆、报告检索删除、历史名单观察收益、模拟账本、回测、偏好和密码、管理员额度/用户/缓存管理。
 
 AI仅在明确点击生成或发送聊天时调用。已完成的相同研究请求按用户、材料、模型、日期去重；原始材料变化会产生新报告。聊天每次发送算独立请求。超时不盲目重试，防止重复费用。AI事实约束通过系统提示和有来源上下文实现，**不能保证模型不会幻觉，使用者仍需核验输出**。
@@ -72,11 +74,11 @@ alphalab/provider.py       有界AKShare子进程，防上游挂起
 alphalab/ai.py             DeepSeek、事实约束、幂等、预算预留与用量
 alphalab/research.py       统一筛选阈值、持仓指标、名单观察收益
 alphalab/trading.py        模拟账本、T+1、实验性均线回测
-alphalab/ui.py             五入口及私人/管理员页面
-assets/styles.css         移动端样式
+alphalab/ui/               导航、组件、首页、个股、账户、后台与只读公共视图
+assets/styles.css         统一design tokens、图表配色及响应式样式
 scripts/manage.py         幂等迁移/初始化/连通检查
 scripts/probe.py           只读外部源诊断
-scripts/browser_check.py   手机视口集成检查
+scripts/browser_check.py   1440/390/430px浏览器检查与本地耗时
 scripts/export_schema.py   从模型导出SQL
 database/migrations/001_initial.sql
 tests/                    pytest自动化检查

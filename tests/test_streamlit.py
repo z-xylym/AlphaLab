@@ -22,9 +22,9 @@ def test_login_home_navigation_and_no_private_access(system,monkeypatch):
     app.session_state['token']=b.token
     app.run(timeout=20)
     assert not app.exception
-    assert app.selectbox[0].options==['首页','行业','选股','个股','我的']
-    app.selectbox[0].select('我的').run(timeout=20)
-    assert '管理后台' not in app.selectbox[1].options
+    assert app.radio(key='navigation').options==['首页','行业','选股','个股','我的']
+    app.radio(key='navigation').set_value('我的').run(timeout=20)
+    assert '管理后台' not in app.selectbox[0].options
     assert not app.exception
 
 def test_research_industry_screen_and_private_screens(system,monkeypatch):
@@ -52,19 +52,21 @@ def test_research_industry_screen_and_private_screens(system,monkeypatch):
     monkeypatch.setattr(AI,'generate',lambda *a,**k:('已核实事实：自动化测试夹具。',False))
     app=AppTest.from_file('app.py');app.session_state['token']=b.token;app.run(timeout=20)
     assert not app.exception and not app.error
-    app.selectbox[0].select('行业').run(timeout=20)
+    app.radio(key='navigation').set_value('行业').run(timeout=20)
     assert not app.exception and not app.error
-    app.selectbox[0].select('选股').run(timeout=20)
+    app.radio(key='navigation').set_value('选股').run(timeout=20)
     next(x for x in app.button if x.label=='生成观察名单').click().run(timeout=20)
     assert not app.exception and not app.error and b.list('screening_runs')
-    app.selectbox[0].select('个股').run(timeout=20)
-    app.text_input[0].input('测试').run(timeout=20)
+    app.radio(key='navigation').set_value('个股').run(timeout=20)
+    app.text_input[0].input('测试')
+    next(x for x in app.button if x.label=='搜索').click().run(timeout=20)
     assert not app.exception and not app.error
     next(x for x in app.button if x.label=='加入自选').click().run(timeout=20)
     assert b.get('watchlist_items','600001')['name']=='测试夹具公司'
-    next(x for x in app.button if x.label=='生成AI研究报告').click().run(timeout=20)
+    app.radio(key='research_tab').set_value('AI研究').run(timeout=20)
+    next(x for x in app.button if x.label=='生成研究报告').click().run(timeout=20)
     assert any('自动化测试夹具' in x.value for x in app.markdown)
-    app.selectbox[0].select('我的').run(timeout=20)
+    app.radio(key='navigation').set_value('我的').run(timeout=20)
     for section in ['自选','聊天','研究历史','模拟交易','策略回测','个人设置','记忆管理']:
-        app.selectbox[1].select(section).run(timeout=20)
+        app.selectbox[0].select(section).run(timeout=20)
         assert not app.exception and not app.error,section
