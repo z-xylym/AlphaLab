@@ -31,9 +31,9 @@ def open_admin(system, monkeypatch, ordinary=False):
     app = AppTest.from_file('app.py')
     app.session_state['token'] = user.token if ordinary else admin.token
     app.run(timeout=20)
-    app.selectbox[0].select('我的').run(timeout=20)
+    app.radio(key='navigation').set_value('我的').run(timeout=20)
     if not ordinary:
-        app.selectbox[1].select('管理后台').run(timeout=20)
+        app.selectbox[0].select('管理后台').run(timeout=20)
     assert not app.exception
     return app
 
@@ -58,7 +58,7 @@ def test_ordinary_user_has_no_admin_entry_or_refresh_and_direct_call_denied(syst
     _, auth, _, user = system
     monkeypatch.setattr(provider, 'call', lambda *a, **k: pytest.fail('Unauthorized request'))
     app = open_admin(system, monkeypatch, ordinary=True)
-    assert '管理后台' not in app.selectbox[1].options
+    assert '管理后台' not in app.selectbox[0].options
     assert not any(x.value == '基础证券名单' for x in app.subheader)
     assert not any(x.label == '更新基础证券名单' for x in app.button)
     with pytest.raises(UserError):
