@@ -420,10 +420,60 @@ def backtest_page(data,repo):
             st.json({k:v for k,v in r['payload'].items() if k not in ('bars','in_sample','out_of_sample')})
             st.download_button('下载完整复现数据',data=__import__('json').dumps(r['payload'],ensure_ascii=False),file_name='alphalab-backtest.json',key='download_'+r['key'])
 
-def admin(repo,auth):
+def admin_security_master(data,repo):
+    # Also check the current server-side role when this block is called directly.
+    with repo.db.begin() as conn:
+        repo.auth.principal(conn,repo.token,admin=True)
+    st.subheader('基础证券名单')
+    st.caption('独立交易所公开名单，不依赖全市场实时快照；仅更新公共缓存，不包含实时价格。部分交易所成功不代表全市场覆盖。')
+    result=None
+    if st.button('更新基础证券名单',key='admin_refresh_security_master'):
+        # Reauthorize immediately before requesting or writing public data.
+        with repo.db.begin() as conn:
+            repo.auth.principal(conn,repo.token,admin=True)
+        try:
+            with st.spinner('读取交易所公开名单并保存公共缓存，失败时保留旧名单…'):
+                result=data.security_master(refresh=True)
+            fresh=[x for x in result['items'] if not x['stale']]
+            if fresh:
+                sources='、'.join(sorted({x['source'] for x in fresh}))
+                fetched=min(x['fetched_at'] for x in fresh)
+                st.success(f"更新成功 · 本次更新股票数量：{len(fresh)} · 来源：{sources} · 数据时间（抓取时间）：{fetched}")
+                if result['stale']:
+                    st.warning('部分交易所更新失败，已保留旧名单；请查看下方各来源状态。')
+            else:
+                st.error('基础证券名单更新失败，已有旧缓存已保留。请使用只读数据源诊断后重试。')
+        except Exception:
+            # Never render/log provider exceptions, URLs, response bodies or secrets.
+            st.error('基础证券名单更新失败，已有旧缓存已保留。请使用只读数据源诊断后重试。')
+    if result is None:
+        try:
+            # Opening the admin page must not implicitly fetch external sources.
+            result=data.security_master(cached_only=True)
+        except DataUnavailable:
+            st.info('是否已有缓存：否 · 股票数量：0 · 来源：暂无 · 抓取时间：暂无 · stale：不适用。')
+            return
+        except Exception:
+            st.error('基础证券名单状态暂不可读取，未清除已有缓存。请稍后重试。')
+            return
+    st.write('是否已有缓存：是')
+    st.metric('股票数量',len(result['items']))
+    groups={}
+    for item in result['items']:
+        key=(item['exchange'],item['source'],item['fetched_at'],bool(item['stale']))
+        groups[key]=groups.get(key,0)+1
+    st.dataframe(pd.DataFrame([
+        {'交易所':ex,'股票数量':count,'来源':src,'抓取时间':fetched,'stale':stale}
+        for (ex,src,fetched,stale),count in sorted(groups.items())
+    ]),hide_index=True,use_container_width=True)
+    if result['stale']:
+        st.warning('部分名单为历史缓存（stale），来源与原抓取时间保持不变。')
+
+def admin(data,repo,auth):
     # Every admin method performs fresh server-side authorization.
     users=repo.admin_users()
     st.subheader('管理后台')
+    admin_security_master(data,repo)
     with st.expander('数据源诊断（只读，仅管理员）'):
         from .market_diagnostics import PROBES, probe_report_for_admin
         from .network_diagnostics import GROUPS, report_for_admin
@@ -472,7 +522,7 @@ def mine(data,repo,ai,auth,user):
     elif section=='研究历史':history_page(repo,data)
     elif section=='模拟交易':simulation(data,repo)
     elif section=='策略回测':backtest_page(data,repo)
-    elif section=='管理后台':admin(repo,auth)
+    elif section=='管理后台':admin(data,repo,auth)
     elif section=='记忆管理':
         for r in repo.list('user_memories'):
             with st.expander(r['key']):
