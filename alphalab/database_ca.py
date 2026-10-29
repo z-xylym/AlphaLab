@@ -31,7 +31,7 @@ def validate_ca(path):
 
 
 @contextmanager
-def explicit_ca_url(database_url, *, certificate_secret='', repository_ca=REPOSITORY_CA, temporary_root=None):
+def explicit_ca_url(database_url, *, certificate_secret='', repository_ca=REPOSITORY_CA, temporary_root=None, snapshot_repository=False):
     """Change ONLY sslrootcert in memory, preserving endpoint, credentials and verify-full.
 
     A repository CA is preferred. Secret PEM is an alternative, never an automatic
@@ -51,6 +51,16 @@ def explicit_ca_url(database_url, *, certificate_secret='', repository_ca=REPOSI
     with tempfile.TemporaryDirectory(prefix='alphalab-ca-', dir=temporary_root) as directory:
         if repository_ca.exists():
             path = repository_ca.resolve()
+            if snapshot_repository:
+                validate_ca(path)
+                try:
+                    content = path.read_bytes()
+                    path = Path(directory) / 'supabase-ca.crt'
+                    with path.open('xb') as file:
+                        os.chmod(path, 0o600)
+                        file.write(content)
+                except Exception:
+                    raise CAConfigurationError() from None
         elif certificate_secret:
             path = Path(directory) / 'supabase-ca.crt'
             try:
