@@ -6,6 +6,8 @@
 
 ## 快速启动
 
+生产已验证新浪日线/财务和主营、但快照失败时，请按 [生产核心研究链修复与验收](docs/PRODUCTION_DATA_REPAIR.md) 操作。股票检索与快照分离，首页改为缓存优先和明确手动刷新。
+
 正式部署且已有管理员时，请按 [应用运行时显式CA与Community Cloud部署](docs/RUNTIME_DEPLOYMENT.md) 配置，不要重复初始化数据库或管理员。
 
 Python **3.12**，从仓库根目录执行：

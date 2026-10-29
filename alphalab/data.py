@@ -29,36 +29,48 @@ def number(value):
         return None
 
 def fetch_policy_index():
-    url='https://www.gov.cn/zhengce/zuixin/'
-    with httpx.Client(timeout=httpx.Timeout(5,connect=3), follow_redirects=False) as client:
-        r=client.get(url)
-        r.raise_for_status()
-    soup=BeautifulSoup(r.content, 'html.parser')
+    from .policy_parser import INDEX, parse_index, official
     items=[]
-    for li in soup.select('li'):
-        a=li.find('a',href=True)
-        if not a:
-            continue
-        link=urljoin(url,a['href'])
-        title=a.get_text(' ',strip=True)
-        date=re.search(r'20\d{2}[-/]\d{2}[-/]\d{2}',li.get_text(' ',strip=True))
-        if urlparse(link).hostname!='www.gov.cn' or not date or len(title)<8:
-            continue
-        items.append({'title':title,'url':link,'published_at':date.group(0),
-            'publisher':'中国政府网（汇总入口；具体发文部门请核对原文）',
-            'status':'征求意见' if '征求意见' in title else '待核对原文',
-            'content':'请打开官方原文核对具体措施，标题不构成完整政策依据。'})
-    return {'items':items[:20], 'date_note':'官方政策索引；未抓取全文的条目不可作已验证影响分析。'}
+    with httpx.Client(timeout=httpx.Timeout(5,connect=3),follow_redirects=False) as client:
+        def read(url):
+            with client.stream('GET',url) as response:
+                # Handle redirects only when the new resource remains the exact official origin.
+                if 300<=response.status_code<400:
+                    target=official(response.headers.get('location',''),url)
+                    if not target or target==url:raise DataUnavailable('官方索引跳转不可验证。')
+                    with client.stream('GET',target) as redirected:
+                        redirected.raise_for_status()
+                        return bounded(redirected)
+                response.raise_for_status()
+                return bounded(response)
+        def bounded(response):
+            chunks=[];size=0
+            for chunk in response.iter_bytes():
+                size+=len(chunk)
+                if size>2_000_000:raise DataUnavailable('官方索引格式暂不可用。')
+                chunks.append(chunk)
+            return b''.join(chunks)
+        items,resources=parse_index(read(INDEX))
+        for resource in resources if not items else []:
+            try:
+                extra,_=parse_index(read(resource),resource);items.extend(extra)
+            except Exception:continue
+    unique={row['url']:row for row in items}
+    return {'items':sorted(unique.values(),key=lambda x:x['published_at'],reverse=True)[:20],
+            'date_note':'官方政策索引；发布日期来自索引记录，不从链接日期猜测；具体措施须核对全文。'}
 
 class MarketData:
     def __init__(self, db):
         self.db = db
-    def cached(self, key, ttl, source, loader, storage=None):
+    def cached(self, key, ttl, source, loader, storage=None, refresh=False):
         # Cross-process single-flight: the lock is held until provider result is persisted.
         with self.db.begin() as c:
+            row = c.execute(select(cache).where(cache.c.key == key)).mappings().first()
+            if row and not refresh:
+                return {**row['payload'], 'fetched_at': row['fetched_at'].isoformat(), 'stale': row['expires_at'] <= now(), 'source': row['source']}
             lock(c, 'data:' + key)
             row = c.execute(select(cache).where(cache.c.key == key)).mappings().first()
-            if row and row['expires_at'] > now():
+            if row and row['expires_at'] > now() and not refresh:
                 return {**row['payload'], 'fetched_at': row['fetched_at'].isoformat(), 'stale': False, 'source': row['source']}
             try:
                 payload = clean(loader())
@@ -74,106 +86,139 @@ class MarketData:
                 'payload': payload, 'source': source, 'fetched_at': fetched, 'expires_at': fetched + timedelta(seconds=ttl)}))
             if storage:
                 t = public[storage]
-                for i, item in enumerate(payload['items']):
-                    itemkey = str(item.get('code', item.get('name', item.get('url', i))))
-                    if len(itemkey) > 180:
+                batch=[]
+                for i,item in enumerate(payload['items']):
+                    itemkey=str(item.get('code',item.get('name',item.get('url',i))))
+                    if len(itemkey)>180:
                         import hashlib
-                        itemkey = hashlib.sha256(itemkey.encode()).hexdigest()
-                    stmt = insert(t).values(key=itemkey, payload=item, source=source, fetched_at=fetched)
-                    c.execute(stmt.on_conflict_do_update(index_elements=['key'], set_={'payload': item, 'source': source, 'fetched_at': fetched}))
+                        itemkey=hashlib.sha256(itemkey.encode()).hexdigest()
+                    batch.append({'key':itemkey,'payload':item,'source':source,'fetched_at':fetched})
+                batch=list({r['key']:r for r in batch}.values())
+                for start in range(0,len(batch),500):
+                    stmt=insert(t).values(batch[start:start+500])
+                    c.execute(stmt.on_conflict_do_update(index_elements=['key'],set_={
+                        'payload':stmt.excluded.payload,'source':stmt.excluded.source,'fetched_at':stmt.excluded.fetched_at}))
             return {**payload, 'fetched_at': fetched.isoformat(), 'stale': False, 'source': source}
+    def cache_only(self,key,force_stale=False):
+        with self.db.connect() as c:
+            row=c.execute(select(cache).where(cache.c.key==key)).mappings().first()
+        if not row:raise DataUnavailable('此数据源已暂停自动请求，暂无可靠缓存。')
+        return {**row['payload'],'source':row['source'],'fetched_at':row['fetched_at'].isoformat(),'stale':force_stale or row['expires_at'] <= now()}
     def spot(self):
-        def load():
-            from . import provider as ak
+        # Both snapshot feeds have failed production checks. Do not auto retry them.
+        return self.cache_only('spot:v1',force_stale=True)
+    def indices(self,refresh=False):
+        def load_one(pair):
+            code,name=pair
+            def load():
+                from .provider import call
+                df=call('stock_zh_index_daily',symbol=code)
+                df['date']=pd.to_datetime(df['date'],errors='coerce')
+                df=df[df['date'].notna() & (df['date'].dt.date<=today())].sort_values('date').tail(2)
+                if len(df)<2:raise DataUnavailable('日线不足。')
+                previous,last=df.iloc[-2],df.iloc[-1]
+                if number(previous['close']) is None or number(last['close']) is None or float(previous['close'])<=0 or float(last['close'])<=0:raise DataUnavailable('日线无效。')
+                return {'items':[{'code':code,'name':name,'price':number(last['close']),
+                    'change_pct':(float(last['close'])/float(previous['close'])-1)*100,
+                    'date':pd.to_datetime(last['date']).strftime('%Y-%m-%d')}]}
+            key='index:sina:'+code
             try:
-                df = ak.call("stock_zh_a_spot_em",)
-                provider = '东方财富（AKShare）'
-                df = df.rename(columns={'代码':'code','名称':'name','最新价':'price','涨跌幅':'change_pct',
-                    '成交额':'turnover','市盈率-动态':'pe','市净率':'pb','总市值':'market_cap'})
-            except Exception:
-                df = ak.call("stock_zh_a_spot",)
-                provider = '新浪财经（AKShare备选）'
-                df = df.rename(columns={'代码':'code','名称':'name','最新价':'price','涨跌幅':'change_pct','成交额':'turnover'})
-            if not {'code','name','price'}.issubset(df.columns):
-                raise DataUnavailable('行情字段不匹配。')
-            df['code'] = df['code'].astype(str).str.replace(r'^(sh|sz|bj)', '', regex=True).str.zfill(6)
-            items = records(df[[x for x in ('code','name','price','change_pct','turnover','pe','pb','market_cap') if x in df.columns]])
-            # Snapshot endpoint has no trusted trading date: never label retrieval time as trading date.
-            return {'items': items, 'provider': provider, 'data_date': None,
-                    'date_note': '快照接口未提供可信交易日期；抓取时间不等于交易时间，非交易日请核对日线。'}
-        return self.cached('spot:v1', 180, 'AKShare：东方财富 / 新浪', load, 'stock_master')
-    def indices(self):
-        def load():
-            from . import provider as ak
-            items=[]
-            for code, name in [('sh000001','上证指数'),('sz399001','深证成指'),('sz399006','创业板指')]:
-                df = ak.call("stock_zh_index_daily_em",symbol=code).tail(2)
-                if len(df)<2:
-                    continue
-                a,b = df.iloc[-2],df.iloc[-1]
-                items.append({'code':code, 'name':name, 'price':number(b['close']),
-                    'change_pct':(float(b['close'])/float(a['close'])-1)*100, 'date':str(b['date'])})
-            return {'items':items, 'date_note':'最近已发布日线，非实时指数。'}
-        return self.cached('indices:v1', 900, '东方财富指数日线（AKShare）', load)
-    def search(self, query):
-        data = self.spot()
-        q = query.strip().lower()
-        return [s for s in data['items'] if q and (q in s['name'].lower() or q in s['code'])][:30]
-    def history(self, code, start='20200101', end=None):
+                return self.cached(key,3600,'新浪指数日线（AKShare）',load,refresh=True) if refresh else self.cache_only(key)
+            except DataUnavailable:return None
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            results=list(executor.map(load_one,[('sh000001','上证指数'),('sz399001','深证成指'),('sz399006','创业板指')]))
+        available=[r for r in results if r]
+        if not available:raise DataUnavailable('指数日线暂无缓存；可手动尝试新浪日线，不自动等待已失败的东方财富。')
+        return {'items':[dict(x,source=r['source'],fetched_at=r['fetched_at'],stale=r['stale']) for r in available for x in r['items']],
+                'source':'新浪指数日线（AKShare）','fetched_at':min(r['fetched_at'] for r in available),
+                'stale':any(r['stale'] for r in available),'date_note':'最近已发布日线，非实时；缺失指数不补值。'}
+    def security_master(self,exchange=None,refresh=False):
+        exchanges=[exchange] if exchange else ['SH','SZ','BJ']
+        methods={'SH':'security_master_sh','SZ':'stock_info_sz_name_code','BJ':'stock_info_bj_name_code'}
+        def one(ex):
+            def load():
+                from .provider import call
+                df=call(methods[ex])
+                df=df.rename(columns={'证券代码':'code','证券简称':'name','A股代码':'code','A股简称':'name',
+                    'A股上市日期':'listing_date','上市日期':'listing_date','所属行业':'industry','A股总股本':'total_shares'})
+                df['code']=df['code'].astype(str).str.replace(r'\.0$','',regex=True).str.zfill(6)
+                df=df[df['code'].str.fullmatch(r'\d{6}') & df['name'].notna()].copy()
+                prefix={'SH':('6',),'SZ':('0','3'),'BJ':('4','8','9')}[ex]
+                df=df[df['code'].str.startswith(prefix)].copy()
+                df['name']=df['name'].astype(str).str.strip()
+                df=df[df['name'].str.len()>0]
+                df['exchange']=ex
+                df['price']=None  # Master data must never masquerade as a price snapshot.
+                items=records(df[[k for k in ('code','name','exchange','listing_date','industry','total_shares','price') if k in df.columns]])
+                return {'items':items,'date_note':'交易所基础证券名单，不含实时价格；仅包含本次成功返回的交易所。'}
+            try:
+                data=self.cached('master:v1:'+ex,86400,'交易所公开证券列表（AKShare）:'+ex,load,'stock_master',refresh=refresh)
+                return [dict(x,source=data['source'],fetched_at=data['fetched_at'],stale=data['stale'],price=None) for x in data['items']]
+            except DataUnavailable:
+                with self.db.connect() as c:
+                    rows=c.execute(select(public['stock_master'])).mappings().all()
+                items=[]
+                for r in rows:
+                    x=r['payload'];code=str(x.get('code',''))
+                    inferred='SH' if code.startswith('6') else 'SZ' if code.startswith(('0','3')) else 'BJ'
+                    if re.fullmatch(r'\d{6}',code) and x.get('name') and inferred==ex:
+                        items.append(dict(x,exchange=ex,price=None,source=r['source'],fetched_at=r['fetched_at'].isoformat(),stale=True))
+                return items
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=3) as executor:rows=[x for group in executor.map(one,exchanges) for x in group]
+        if not rows:raise DataUnavailable('基础证券名单暂不可用，且无已保存真实名单；不依赖实时快照，不生成股票代码。请管理员诊断交易所名单接口。')
+        return {'items':rows,'source':'逐条来源见证券记录','fetched_at':min(x['fetched_at'] for x in rows),
+                'stale':any(x['stale'] for x in rows),'date_note':'基础名单与价格分离；未成功返回的交易所不保证覆盖。'}
+    def search(self,query):
+        q=query.strip().lower()
+        if not q:return []
+        ex=('SH' if q.startswith('6') else 'SZ' if q.startswith(('0','3')) else 'BJ') if re.fullmatch(r'\d{6}',q) else None
+        return [x for x in self.security_master(ex)['items'] if q in x['name'].lower() or q in x['code']][:30]
+    def history(self, code, start='20200101', end=None,refresh=False):
         if not re.fullmatch(r'\d{6}', code):
             raise UserError('股票代码须为6位数字。')
         end = end or today().strftime('%Y%m%d')
         def load():
             from . import provider as ak
-            try:
-                df = ak.call("stock_zh_a_hist",symbol=code, period='daily', start_date=start, end_date=end, adjust='')
-                df = df.rename(columns={'日期':'date','开盘':'open','最高':'high','最低':'low','收盘':'close','成交量':'volume','成交额':'amount'})
-                provider='东方财富不复权日线'
-            except Exception:
-                symbol = ('sh' if code.startswith('6') else 'bj' if code.startswith(('4','8','9')) else 'sz') + code
-                df = ak.call("stock_zh_a_daily",symbol=symbol, start_date=start, end_date=end, adjust='')
-                provider='新浪不复权日线（备选）'
+            symbol = ('sh' if code.startswith('6') else 'bj' if code.startswith(('4','8','9')) else 'sz') + code
+            df = ak.call('stock_zh_a_daily',symbol=symbol,start_date=start,end_date=end,adjust='')
+            provider='新浪不复权日线（生产优先）'
             if not {'date','open','high','low','close','volume'}.issubset(df.columns):
                 raise DataUnavailable('日线字段不完整。')
             df['date']=pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
             return {'items':records(df[['date','open','high','low','close','volume']]), 'code':code, 'provider':provider,
                     'date_note':'未复权价格；分红送转会影响收益，不用于宣称真实投资回报。'}
-        return self.cached(f'history:{code}:{start}:{end}', 3600, 'AKShare 不复权日线', load)
-    def company(self, code):
-        def load():
-            from . import provider as ak
-            df=ak.call("stock_individual_info_em",symbol=code)
-            fields=dict(zip(df['item'].astype(str),df['value'].astype(str)))
-            return {'items':[fields], 'code':code, 'date_note':'公司信息为抓取时可用版本，不代表历史时点。'}
-        return self.cached('company:'+code, 86400, '东方财富公司资料（AKShare）', load)
-    def financials(self, code):
+        return self.cached(f'history:{code}:{start}:{end}', 3600, 'AKShare 不复权日线', load,refresh=refresh)
+    def company(self,code):
+        matches=[x for x in self.search(code) if x['code']==code]
+        if not matches:raise DataUnavailable('暂无可靠公司基础资料。')
+        x=matches[0]
+        info={'股票代码':code,'股票简称':x['name'],'交易所':x.get('exchange'),
+              '上市时间':x.get('listing_date') or '暂无可靠数据','行业':x.get('industry') or '暂无可靠数据',
+              '总股本':x.get('total_shares') or '暂无可靠数据'}
+        return {'items':[info],'source':x['source'],'fetched_at':x['fetched_at'],'stale':x['stale'],
+                'date_note':'基础资料来自证券名单；未提供的字段不从模型或价格推断。'}
+    def financials(self, code,refresh=False):
         def load():
             from .provider import call
             df=call('sina_financial_summary',symbol=code)
             return {'items':records(df), 'code':code,
                     'date_note':'按原始报表期展示；报表期不等于公告日。禁止用于历史财务选股回测。'}
-        return self.cached('financial:'+code, 21600, '新浪财务摘要（AKShare）', load)
-    def sectors(self, concept=False):
-        def load():
-            from . import provider as ak
-            df=ak.call("stock_board_concept_name_em",) if concept else ak.call("stock_board_industry_name_em",)
-            df=df.rename(columns={'板块名称':'name','板块代码':'code','涨跌幅':'change_pct','总市值':'market_cap'})
-            return {'items':records(df), 'date_note':'东方财富行业分类' if not concept else '投资主题标签，非正式行业分类'}
-        return self.cached('sectors:'+str(concept), 1800, '东方财富板块（AKShare）', load, 'industries')
-    def members(self, name, concept=False):
-        def load():
-            from . import provider as ak
-            df=ak.call("stock_board_concept_cons_em",symbol=name) if concept else ak.call("stock_board_industry_cons_em",symbol=name)
-            df=df.rename(columns={'代码':'code','名称':'name','最新价':'price','涨跌幅':'change_pct','成交额':'turnover','市盈率-动态':'pe','市净率':'pb'})
-            df['code']=df['code'].astype(str).str.zfill(6)
-            return {'items':records(df), 'sector':name}
-        return self.cached('members:'+str(concept)+':'+name, 1800, '东方财富板块成分（AKShare）', load)
-    def policies(self):
+        return self.cached('financial:'+code, 21600, '新浪财务摘要（AKShare）', load,refresh=refresh)
+    def sectors(self,concept=False):
+        return self.cache_only('sectors:'+str(concept),force_stale=True)
+    def members(self,name,concept=False):
+        return self.cache_only('members:'+str(concept)+':'+name,force_stale=True)
+    def policies(self,refresh=False):
         def load():
             from .provider import call
             return {'items':records(call('government_policy_index')),
                     'date_note':'官方政策索引；未抓取全文的条目不可作已验证影响分析。'}
-        return self.cached('policies:v1', 3600, 'https://www.gov.cn/zhengce/zuixin/', load, 'policies')
+        if not refresh:
+            try:return self.cache_only('policies:v2')
+            except DataUnavailable:return self.cache_only('policies:v1',force_stale=True)
+        return self.cached('policies:v2', 3600, 'https://www.gov.cn/zhengce/zuixin/', load, 'policies', refresh=refresh)
     @staticmethod
     def compact_financials(data):
         items=[]
@@ -220,7 +265,7 @@ class MarketData:
         import hashlib
         return self.cached('policy:'+hashlib.sha256(url.encode()).hexdigest(),86400,url,load)
 
-    def business(self,code):
+    def business(self,code,refresh=False):
         def load():
             from .provider import call
             symbol=('SH' if code.startswith('6') else 'SZ' if code.startswith(('0','3')) else 'BJ')+code
@@ -229,7 +274,7 @@ class MarketData:
             latest=df['报告日期'].max()
             return {'items':records(df[df['报告日期']==latest]),'code':code,
                 'date_note':'主营构成按所示报告日期披露；不同分类口径不可叠加。'}
-        return self.cached('business:'+code,86400,'东方财富主营构成（AKShare）',load)
+        return self.cached('business:'+code,86400,'东方财富主营构成（AKShare）',load,refresh=refresh)
     @staticmethod
     def financial_summary(data):
         aliases={
@@ -247,15 +292,15 @@ class MarketData:
         return result
 
 
-def read_home_sections(data):
+def read_home_sections(data,refresh=False):
     """Independent public reads only. No Streamlit API calls from worker threads."""
     from concurrent.futures import ThreadPoolExecutor
     import time
     def read(name):
         start=time.monotonic()
-        try:result=getattr(data,name)()
+        try:result=getattr(data,name)(refresh=True) if refresh and name in ('indices','policies') else getattr(data,name)()
         except Exception as exc:result=exc
         return {'result':result,'elapsed_seconds':round(time.monotonic()-start,3)}
-    names=('indices','spot','policies')
+    names=('indices','policies') if refresh else ('indices','spot','policies')
     with ThreadPoolExecutor(max_workers=3) as executor:
         return dict(zip(names,executor.map(read,names)))

@@ -39,6 +39,7 @@ def test_research_industry_screen_and_private_screens(system,monkeypatch):
     def envelope(items,**extra):
         return {'items':items,'source':'自动化测试夹具，非真实行情','fetched_at':'2026-01-01T00:00:00+00:00','stale':False,**extra}
     monkeypatch.setattr(MarketData,'spot',lambda self:envelope([stock]))
+    monkeypatch.setattr(MarketData,'security_master',lambda self,*a,**k:envelope([dict(stock,price=None)]))
     monkeypatch.setattr(MarketData,'indices',lambda self:envelope([dict(stock,date='2026-01-01')]))
     monkeypatch.setattr(MarketData,'policies',lambda self:envelope([]))
     monkeypatch.setattr(MarketData,'sectors',lambda self,*a:envelope([{'name':'测试行业'}]))

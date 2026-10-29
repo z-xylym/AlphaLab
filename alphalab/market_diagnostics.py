@@ -4,6 +4,8 @@ from threading import RLock
 from . import provider
 
 PROBES = {
+    'security_master_sh': {}, 'stock_info_sz_name_code': {}, 'stock_info_bj_name_code': {},
+    'stock_zh_index_daily': {'symbol':'sh000001'},
     'government_policy_index': {},
     'stock_zh_a_spot_em': {}, 'stock_zh_a_spot': {},
     'stock_zh_index_daily_em': {'symbol':'sh000001'},
