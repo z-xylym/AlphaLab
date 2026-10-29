@@ -35,7 +35,8 @@ jobs:
         timeout-minutes: 2
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python -m scripts.diagnose_database
+          SUPABASE_CA_CERT: ${{ secrets.SUPABASE_CA_CERT }}
+        run: python -m scripts.diagnose_database --explicit-ca
       - name: Check existing schema and initialize administrator
         if: inputs.confirmation == 'INITIALIZE'
         env:
@@ -43,9 +44,8 @@ jobs:
           APP_SECRET_KEY: ${{ secrets.APP_SECRET_KEY }}
           ADMIN_PHONE: ${{ secrets.ADMIN_PHONE }}
           ADMIN_INITIAL_PASSWORD: ${{ secrets.ADMIN_INITIAL_PASSWORD }}
+          SUPABASE_CA_CERT: ${{ secrets.SUPABASE_CA_CERT }}
         shell: bash
         run: |
           set -euo pipefail
-          python -m scripts.manage check
-          python -m scripts.manage bootstrap
-          python -m scripts.manage admin-check
+          python -m scripts.bootstrap_with_ca
