@@ -133,7 +133,9 @@ class MarketData:
         return {'items':[dict(x,source=r['source'],fetched_at=r['fetched_at'],stale=r['stale']) for r in available for x in r['items']],
                 'source':'新浪指数日线（AKShare）','fetched_at':min(r['fetched_at'] for r in available),
                 'stale':any(r['stale'] for r in available),'date_note':'最近已发布日线，非实时；缺失指数不补值。'}
-    def security_master(self,exchange=None,refresh=False):
+    def security_master(self,exchange=None,refresh=False,cached_only=False):
+        if cached_only and refresh:
+            raise ValueError('Cached-only reads cannot refresh.')
         exchanges=[exchange] if exchange else ['SH','SZ','BJ']
         methods={'SH':'security_master_sh','SZ':'stock_info_sz_name_code','BJ':'stock_info_bj_name_code'}
         def one(ex):
@@ -153,7 +155,8 @@ class MarketData:
                 items=records(df[[k for k in ('code','name','exchange','listing_date','industry','total_shares','price') if k in df.columns]])
                 return {'items':items,'date_note':'交易所基础证券名单，不含实时价格；仅包含本次成功返回的交易所。'}
             try:
-                data=self.cached('master:v1:'+ex,86400,'交易所公开证券列表（AKShare）:'+ex,load,'stock_master',refresh=refresh)
+                data=(self.cache_only('master:v1:'+ex) if cached_only else
+                      self.cached('master:v1:'+ex,86400,'交易所公开证券列表（AKShare）:'+ex,load,'stock_master',refresh=refresh))
                 return [dict(x,source=data['source'],fetched_at=data['fetched_at'],stale=data['stale'],price=None) for x in data['items']]
             except DataUnavailable:
                 with self.db.connect() as c:
