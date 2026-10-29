@@ -88,14 +88,22 @@ def login_screen(auth):
 def home(data,ai,level):
     st.subheader('每天，看懂一点市场。')
     st.write('先了解大盘，再看行业和公司。这里的每一个数字，都应该有出处。')
-    indices=fetch_panel(data.indices)
+    from .data import read_home_sections
+    with st.spinner('并行读取指数、市场和政策；首次没有缓存可能需要等待…'):
+        sections=read_home_sections(data)
+    def section(name):
+        entry=sections[name]
+        st.caption(f"本次读取耗时：{entry['elapsed_seconds']:.3f} 秒（含缓存/上游等待）")
+        if isinstance(entry['result'],Exception):raise entry['result']
+        return entry['result']
+    indices=fetch_panel(lambda:section('indices'))
     if indices:
         for x in indices['items']:
             with st.container(border=True):
                 st.metric(x['name'],fmt(x['price']),f"{x['change_pct']:+.2f}%",delta_color='inverse')
                 st.caption('有效数据日期：'+x['date'])
     st.markdown('#### A股市场快照')
-    spot=fetch_panel(data.spot)
+    spot=fetch_panel(lambda:section('spot'))
     if spot:
         valid=[number(x.get('change_pct')) for x in spot['items']]
         valid=[x for x in valid if x is not None]
@@ -104,7 +112,7 @@ def home(data,ai,level):
         st.write('快照成交额汇总：'+fmt(sum(x for x in amounts if x is not None)/1e8,'亿元'))
         st.caption('按返回股票汇总，可能不等同于交易所官方市场口径。')
     st.markdown('#### 政策动态')
-    policies=fetch_panel(data.policies)
+    policies=fetch_panel(lambda:section('policies'))
     if policies:
         policy_cards(policies['items'])
     evidence={}
@@ -398,6 +406,22 @@ def admin(repo,auth):
     # Every admin method performs fresh server-side authorization.
     users=repo.admin_users()
     st.subheader('管理后台')
+    with st.expander('数据源诊断（只读，仅管理员）'):
+        from .market_diagnostics import PROBES, probe_report_for_admin
+        from .network_diagnostics import GROUPS, report_for_admin
+        group=st.selectbox('域名网络诊断分组',list(GROUPS))
+        if st.button('检查该组DNS/TCP/TLS/HTTPS（只读）'):
+            with st.spinner('分阶段检测公开目标，最多3个并发；结果冷却60秒…'):
+                results=report_for_admin(repo,group)
+            st.dataframe(pd.DataFrame(results),hide_index=True,use_container_width=True)
+            st.caption('秒数为各阶段实际等待时间；HTTPS只测连通性，不读取正文、不代表业务数据正常。PROXY_ROUTE表示保留平台代理，不直连绕过；403不能单独证明地区限制。')
+        endpoint=st.selectbox('选择单个公开接口',list(PROBES))
+        st.caption('从本应用所在云环境测试；单次最多约12秒。同一接口结果保留30秒。不显示请求或响应详情，不写行情缓存。')
+        if st.button('运行只读数据源诊断',use_container_width=True):
+            with st.spinner('正在诊断所选接口…'):
+                report=probe_report_for_admin(repo,endpoint)
+            st.json(report)
+            st.caption('CONNECTED仅说明本次接口调用和必要字段检查通过，不证明实时性或以后持续可用。403/429也不能单独证明地区限制。')
     st.success('数据库查询正常。')
     st.caption('DeepSeek密钥：'+('已配置（不代表连接验证通过）' if auth.settings.deepseek_api_key else '待配置'))
     st.caption(f'平台每日上限：{auth.settings.platform_daily_calls}次 · 每日预算：{auth.settings.daily_budget}元；在服务端Secrets中调整。')

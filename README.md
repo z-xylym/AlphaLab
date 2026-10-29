@@ -44,6 +44,8 @@ AI仅在明确点击生成或发送聊天时调用。已完成的相同研究请
 
 ## 测试与证据
 
+生产环境金融/政策源同时失败时，请按 [Cloud外部网络与数据源诊断](docs/MARKET_DATA_DIAGNOSTICS.md) 从管理员后台分阶段测量，不要修改数据库或TLS配置。
+
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest -q
