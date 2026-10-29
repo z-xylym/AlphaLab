@@ -1,5 +1,7 @@
 # 部署到 Streamlit Community Cloud
 
+**管理员已初始化且显式CA验证成功时，优先使用 [运行时显式CA部署步骤](RUNTIME_DEPLOYMENT.md)。** 不要重新迁移或初始化管理员，Actions Secrets需另行安全配置到Streamlit。
+
 无需自有服务器。需要你拥有 GitHub 私有仓库、Streamlit Community Cloud 和 Supabase 项目访问权。此文档不代表应用已上线，也未替你创建或付费订阅任何服务。
 
 ## 1. GitHub

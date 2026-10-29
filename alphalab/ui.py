@@ -4,6 +4,7 @@ from uuid import uuid4
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from sqlalchemy.exc import SQLAlchemyError
 from .config import Settings, SetupRequired, UserError
 from .db import today
 from .auth import Auth
@@ -471,6 +472,8 @@ def main():
         if '会话已过期' in str(exc):
             st.session_state.clear()
             if st.button('返回登录'):st.rerun()
+    except SQLAlchemyError:
+        st.error('数据库安全连接配置未完成或数据库暂时不可用。请检查部署平台的官方 CA 和连接配置。')
     except Exception:
         # Avoid leaking SQL, DB URLs, phone numbers or upstream response bodies.
         st.error('服务暂不可用。请检查数据库迁移、网络和管理员配置后重试；未展示敏感错误详情。')

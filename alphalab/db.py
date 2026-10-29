@@ -87,7 +87,13 @@ def engine_for(url):
 
 def engine(settings):
     settings.require_db()
-    return engine_for(settings.database_url)
+    from sqlalchemy.engine import make_url
+    url = make_url(settings.database_url)
+    local = url.host in ('localhost', '127.0.0.1', '::1') or (not url.host and str(url.query.get('host', '')).startswith('/tmp/'))
+    if local:
+        return engine_for(settings.database_url)  # Existing local PostgreSQL development/tests only.
+    from .runtime_database import runtime_engines
+    return runtime_engines.get(settings.database_url, settings.supabase_ca_cert)
 
 def lock(conn, name):
     conn.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:name, 0))'), {'name': name})

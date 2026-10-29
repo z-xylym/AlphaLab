@@ -6,6 +6,8 @@
 
 ## 快速启动
 
+正式部署且已有管理员时，请按 [应用运行时显式CA与Community Cloud部署](docs/RUNTIME_DEPLOYMENT.md) 配置，不要重复初始化数据库或管理员。
+
 Python **3.12**，从仓库根目录执行：
 
 ```bash
