@@ -1,5 +1,7 @@
 # 数据库连接失败：先运行只读诊断
 
+**已得到TLS_CERTIFICATE_ERROR时，请改按 [Supabase显式CA只读验证](SUPABASE_CA.md) 操作。** 使用新工作流，不再依赖system，也不执行管理员初始化。
+
 `Operation failed: OperationalError` 只是SQLAlchemy/psycopg的连接错误外层类型，不能单凭它判断密码错误。不要继续盲目重置密码。这个诊断工具只输出固定类别与固定修复建议，不输出异常原文、SQLAlchemy URL、主机、IP、密码或手机号。
 
 ## 合并后如何运行（无需本地Python）
