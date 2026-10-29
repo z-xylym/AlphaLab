@@ -18,6 +18,10 @@ CATEGORIES = frozenset({'CONNECTED','DNS_ERROR','NETWORK_TIMEOUT','NETWORK_ERROR
     'HTTP_RATE_LIMITED','HTTP_ERROR','TLS_ERROR','PROVIDER_SCHEMA_CHANGED','AKSHARE_VERSION_INCOMPATIBLE',
     'AKSHARE_CALL_FAILED','OTHER_ERROR','PROVIDER_TIMEOUT','HTTP_REDIRECT'})
 REQUIRED = {
+    'security_master_sh': {'证券代码','证券简称'},
+    'stock_info_sz_name_code': {'A股代码','A股简称'},
+    'stock_info_bj_name_code': {'证券代码','证券简称'},
+    'stock_zh_index_daily': {'date','close'},
     'government_policy_index': {'title','url','published_at'},
     'stock_zh_a_spot_em': {'代码','名称','最新价'}, 'stock_zh_a_spot': {'代码','名称','最新价'},
     'stock_zh_index_daily_em': {'date','close'}, 'stock_board_industry_name_em': {'板块名称','板块代码'},
@@ -139,6 +143,14 @@ def worker(name, kwargs):
             if name=='government_policy_index':
                 from .data import fetch_policy_index
                 frame=pd.DataFrame(fetch_policy_index()['items'])
+            elif name=='security_master_sh':
+                from concurrent.futures import ThreadPoolExecutor
+                def board(value):
+                    try:return akshare.stock_info_sh_name_code(symbol=value)
+                    except Exception:return pd.DataFrame()
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    parts=list(executor.map(board,['主板A股','科创板']))
+                frame=pd.concat(parts,ignore_index=True)
             elif name=='sina_financial_summary':frame=financial_frame(requests,kwargs['symbol'])
             else:frame=getattr(akshare,name)(**kwargs)
             validate(name,frame)

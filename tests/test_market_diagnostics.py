@@ -78,18 +78,13 @@ def test_timeout_and_untrusted_child_output_are_redacted(monkeypatch,capsys):
     out=capsys.readouterr();assert not out.out+out.err
 
 
-def test_schema_is_checked_before_fallback(monkeypatch):
-    from alphalab.data import MarketData
-    calls=[]
-    def run(args,**kwargs):
-        name=args[3];calls.append(name)
-        frame=pd.DataFrame([{'unexpected':'secret-body'}]) if name.endswith('_em') else pd.DataFrame([{'代码':'sh600868','名称':'测试夹具','最新价':10}])
-        return SimpleNamespace(returncode=0,stdout=frame.to_json(orient='split'))
-    monkeypatch.setattr(p.subprocess,'run',run)
+def test_suspended_snapshot_does_not_call_any_provider(monkeypatch):
+    from alphalab.data import MarketData,DataUnavailable
+    monkeypatch.setattr(p,'call',lambda *a,**k:pytest.fail('Suspended snapshots must not be requested'))
     data=MarketData(None)
-    monkeypatch.setattr(data,'cached',lambda key,ttl,source,loader,storage=None:loader())
-    assert data.spot()['items'][0]['code']=='600868'
-    assert calls==['stock_zh_a_spot_em','stock_zh_a_spot']
+    def missing(key,**kwargs):raise DataUnavailable('无缓存')
+    monkeypatch.setattr(data,'cache_only',missing)
+    with pytest.raises(DataUnavailable):data.spot()
 
 
 def test_admin_role_checked_before_network(system,monkeypatch):

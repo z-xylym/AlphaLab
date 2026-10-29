@@ -89,6 +89,12 @@ def home(data,ai,level):
     st.subheader('每天，看懂一点市场。')
     st.write('先了解大盘，再看行业和公司。这里的每一个数字，都应该有出处。')
     from .data import read_home_sections
+    if st.button('更新可用公共源（新浪指数与官方政策）',use_container_width=True):
+        with st.spinner('首次读取可用源，旧缓存仍会保留…'):
+            updated=read_home_sections(data,refresh=True)
+            for entry in updated.values():
+                if isinstance(entry['result'],DataUnavailable):st.info(str(entry['result']))
+    st.caption('首页优先显示缓存，不自动重试生产失败源；首次无缓存请手动更新。')
     with st.spinner('并行读取指数、市场和政策；首次没有缓存可能需要等待…'):
         sections=read_home_sections(data)
     def section(name):
@@ -204,15 +210,27 @@ def screener(data,repo,ai,level):
 
 def stock_research(data,repo,ai,level):
     st.subheader('认识一家公司')
+    if st.button('更新基础证券名单（交易所公开列表）'):
+        fetch_panel(lambda:data.security_master(refresh=True))
     query=st.text_input('输入股票名称、代码或关键词',placeholder='例如：梅雁、600868')
     if not query:return
     matches=data.search(query)
     if not matches:
-        st.info('未找到匹配股票，请换一个名称或代码。');return
+        st.info('当前已取得的基础名单中未匹配；部分交易所可能暂不可用，请换关键词或更新名单。');return
     lookup={f"{x['name']} · {x['code']}":x for x in matches}
     choice=st.selectbox('搜索结果',list(lookup));stock=lookup[choice];code=stock['code']
-    source(data.spot())
+    source(stock)
+    st.caption('基础证券名单独立于快照；价格暂不可用时仍可研究公司。')
     show_stock(stock)
+    if st.button('更新该公司研究数据（新浪日线、财务与主营）'):
+        from concurrent.futures import ThreadPoolExecutor
+        with st.spinner('并行更新已验证数据链，失败保留旧缓存…'):
+            loaders=[lambda:data.history(code,refresh=True),lambda:data.financials(code,refresh=True),lambda:data.business(code,refresh=True)]
+            def update(loader):
+                try:loader();return True
+                except DataUnavailable:return False
+            with ThreadPoolExecutor(max_workers=3) as executor:success=list(executor.map(update,loaders))
+        st.caption(f'本次成功更新 {sum(success)}/3 类数据；失败项不生成替代数值。')
     if st.button('加入自选',use_container_width=True):
         repo.put('watchlist_items',code,{'code':code,'name':stock['name']});st.success('已加入自选。')
     info=fetch_panel(lambda:data.company(code))
@@ -358,7 +376,7 @@ def simulation(data,repo):
         submitted=st.form_submit_button('记录模拟交易')
     if submitted:
         matches=[x for x in data.search(code) if x['code']==code and 'ST' not in x['name'].upper() and '退' not in x['name']]
-        if not matches:raise UserError('仅支持可核实、非风险警示的在市股票。')
+        if not matches or matches[0].get('stale'):raise UserError('证券身份资料缺失或过时，不能模拟成交；请先更新基础名单。')
         bars=data.history(code)
         if bars.get('stale') or (today()-date.fromisoformat(bars['items'][-1]['date'])).days>10:
             raise UserError('行情过时，拒绝模拟成交。')
@@ -384,7 +402,7 @@ def backtest_page(data,repo):
     if submitted:
         if start>=end:raise UserError('起始日期应早于结束日期。')
         stock=[x for x in data.search(code) if x['code']==code]
-        if not stock or 'ST' in stock[0]['name'].upper():raise UserError('请选择已核实的非ST沪深主板股票。')
+        if not stock or stock[0].get('stale') or 'ST' in stock[0]['name'].upper():raise UserError('请选择已核实的非ST沪深主板股票。')
         history=data.history(code,start.strftime('%Y%m%d'),end.strftime('%Y%m%d'));source(history)
         result=backtest(history['items'],code,int(fast),int(slow))
         result['source']={k:v for k,v in history.items() if k!='items'}

@@ -80,7 +80,7 @@ def test_cache_refresh_failure_does_not_clear_data(system):
 def test_search_name_code_keyword(system,monkeypatch):
     _,auth,_,_=system
     data=MarketData(auth.db)
-    monkeypatch.setattr(data,'spot',lambda:{'items':[{'code':'600868','name':'梅雁吉祥'},{'code':'600001','name':'梅雁测试'}]})
+    monkeypatch.setattr(data,'security_master',lambda *a,**k:{'items':[{'code':'600868','name':'梅雁吉祥'},{'code':'600001','name':'梅雁测试'}]})
     assert len(data.search('梅雁'))==2
     assert len(data.search('梅雁吉祥'))==1
     assert data.search('600868')[0]['name']=='梅雁吉祥'
@@ -117,7 +117,7 @@ def test_official_policy_html_and_full_text(system,monkeypatch):
     from alphalab.data import fetch_policy_index
     import pandas as pd
     monkeypatch.setattr(provider,'call',lambda *a,**k:pd.DataFrame(fetch_policy_index()['items']))
-    index=data.policies()
+    index=data.policies(refresh=True)
     assert len(index['items'])==1 and index['items'][0]['status']=='征求意见'
     full=data.policy_detail(index['items'][0]['url'])
     assert '测试正文' in full['items'][0]['text']
