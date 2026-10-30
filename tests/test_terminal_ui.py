@@ -131,14 +131,19 @@ def test_module_failure_does_not_block_other_panels_or_leak(system, monkeypatch)
     assert not app.exception and not app.error
     app.radio(key='research_tab').set_value('AI研究').run(timeout=20)
     captured = []
-    def generate(self, purpose, question, evidence, level):
-        captured.append(evidence)
-        return '测试报告，非投资建议', False
-    monkeypatch.setattr(AI, 'generate', generate)
-    next(x for x in app.button if x.label == '生成研究报告').click().run(timeout=20)
-    assert captured[0]['business'] is None
-    assert captured[0]['financials']['stale'] is True
-    assert captured[0]['latest_bars'] and captured[0]['company']
+    def generate(self, context, regenerate=False):
+        import json
+        from alphalab.company_report import payload, SECTIONS
+        captured.append(context)
+        answer=json.dumps({'sections':[{'title':title,'facts':[],'analysis':['测试报告，非投资建议'],'missing_data':[]} for title in SECTIONS]})
+        return payload(context,answer,self.settings.deepseek_model,now().isoformat()),False
+    monkeypatch.setattr(AI, 'company_report', generate)
+    monkeypatch.setenv('DEEPSEEK_API_KEY','test-not-real-key')
+    app.run(timeout=20)
+    next(x for x in app.button if x.label == '生成AI研究').click().run(timeout=20)
+    assert captured[0]['business_composition']['missing']
+    assert captured[0]['financial_summary']['营业收入']['stale'] is True
+    assert captured[0]['price_history_summary']['value'] and captured[0]['security']['code']['value']=='600519'
     assert not app.warning and not app.error
 
 
@@ -183,3 +188,53 @@ def test_metadata_and_metrics_escape_dynamic_html_and_hide_raw_source(monkeypatc
     assert 'secret-cookie-value' not in output[0] and '历史缓存' in output[0]
     assert '<script>' not in output[1] and '<img src=x>' not in output[1]
     assert '&lt;script&gt;' in output[1]
+
+
+def test_company_ai_keyless_no_automatic_calls_persistence_and_failure(system, monkeypatch):
+    import json
+    import httpx
+    from alphalab.company_report import SECTIONS
+    _, auth, _, user = system
+    seed_research(auth)
+    monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
+    monkeypatch.setattr(provider, 'call', lambda *a, **k: pytest.fail('AI tab must not fetch live market data'))
+    calls=[]
+    fail=[False]
+    def handler(request):
+        calls.append(json.loads(request.content))
+        assert request.headers['Authorization']=='Bearer test-not-real-key'
+        if fail[0]:return httpx.Response(500,text='PRIVATE_PROVIDER_BODY')
+        answer=json.dumps({'sections':[{'title':title,'facts':[], 'analysis':['UI隔离测试报告，非投资结论'],
+                                        'missing_data':['缺少实时价格']} for title in SECTIONS]})
+        return httpx.Response(200,json={'choices':[{'message':{'content':answer},'finish_reason':'stop'}],
+                                        'usage':{'prompt_tokens':100,'completion_tokens':200}})
+    original=AI.__init__
+    def initialize(self,repo,settings,**kwargs):
+        original(self,repo,settings,lambda **kw:httpx.Client(transport=httpx.MockTransport(handler),**kw))
+    monkeypatch.setattr(AI,'__init__',initialize)
+    app=search(launch(system,monkeypatch))
+    app.radio(key='research_tab').set_value('AI研究').run(timeout=20)
+    assert not app.exception and not app.error
+    assert any('AI研究服务尚未配置' in x.value for x in app.info)
+    assert next(x for x in app.button if x.label=='生成AI研究').disabled
+    assert not calls
+    monkeypatch.setenv('DEEPSEEK_API_KEY','test-not-real-key')
+    app.run(timeout=20)
+    assert not calls
+    next(x for x in app.button if x.label=='生成AI研究').click().run(timeout=20)
+    assert not app.exception and not app.error and len(calls)==1
+    assert set(SECTIONS) <= {x.value for x in app.subheader}
+    assert any('生成时间' in x.value for x in app.caption)
+    app.run(timeout=20)
+    assert len(calls)==1 and set(SECTIONS) <= {x.value for x in app.subheader}
+    next(x for x in app.button if x.label=='生成AI研究').click().run(timeout=20)
+    assert len(calls)==1
+    next(x for x in app.button if x.label=='重新生成AI研究').click().run(timeout=20)
+    assert len(calls)==2
+    fail[0]=True
+    next(x for x in app.button if x.label=='重新生成AI研究').click().run(timeout=20)
+    assert len(calls)==3 and app.warning and not app.exception and not app.error
+    assert set(SECTIONS) <= {x.value for x in app.subheader}
+    assert 'PRIVATE_PROVIDER_BODY' not in '\n'.join(x.value for x in app.warning)
+    reports=[row['payload'] for row in user.list('research_reports') if row['payload'].get('purpose')=='company_report']
+    assert len(reports)==1 and reports[0]['context_snapshot']['security']['code']['value']=='600519'

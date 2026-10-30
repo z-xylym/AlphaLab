@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 from ..data import DataUnavailable, number
-from .components import data_meta, date_label, empty_state, fmt, metric_grid, ai_button, chart_style
+from .components import data_meta, date_label, empty_state, fmt, metric_grid, chart_style
 from .reads import CachedResearch, invalidate, remember
 
 GLOSSARY = {
@@ -157,17 +157,5 @@ def stock_research(data, repo, ai, level):
         st.dataframe(frame[fields] if fields else frame, hide_index=True, use_container_width=True)
         st.caption('按披露报告期展示；不同分类口径不可叠加。')
     else:
-        st.subheader('公司研究')
-        st.caption('基于当前已取得的公司、财务、主营与历史数据。')
-        info = optional(lambda: view.company(code))
-        financial = optional(lambda: view.financials(code))
-        business = optional(lambda: view.business(code))
-        history = optional(lambda: view.history(code))
-        evidence = {'stock': stock, 'company': info, 'business': business,
-                    'financials': view.compact_financials(financial) if financial else None,
-                    'latest_bars': dict(history, items=history['items'][-20:]) if history else None}
-        with st.expander('本次研究资料'):
-            for title, value in (('基础资料', info), ('财务', financial), ('主营', business), ('日线', history)):
-                st.caption(title+(' · 已取得' if value else ' · 尚未取得'))
-                data_meta(value)
-        ai_button(ai, 'stock', '生成研究报告', evidence, stock['name']+' '+code, level, key='stock_'+code)
+        from .company_ai import company_ai
+        company_ai(view, stock, ai)
