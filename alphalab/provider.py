@@ -13,6 +13,7 @@ import pandas as pd
 
 REQUEST_TIMEOUT = (3, 5)  # connect / read inactivity; total call is independently bounded.
 PROVIDER_TIMEOUT = 12
+BJ_PROVIDER_TIMEOUT = 45  # Whole subprocess budget, including imports and all pages.
 FAILURE_COOLDOWN = 60
 CATEGORIES = frozenset({'CONNECTED','DNS_ERROR','NETWORK_TIMEOUT','NETWORK_ERROR','HTTP_FORBIDDEN',
     'HTTP_RATE_LIMITED','HTTP_ERROR','TLS_ERROR','PROVIDER_SCHEMA_CHANGED','AKSHARE_VERSION_INCOMPATIBLE',
@@ -82,7 +83,7 @@ def call(name, _diagnostic=False, **kwargs):
         for variable in ('DATABASE_URL','APP_SECRET_KEY','DEEPSEEK_API_KEY','SUPABASE_CA_CERT','ADMIN_PHONE','ADMIN_INITIAL_PASSWORD'):
             child_env.pop(variable,None)
         result=subprocess.run([sys.executable,'-m','alphalab.provider',name,json.dumps(kwargs)],
-            capture_output=True,text=True,timeout=PROVIDER_TIMEOUT,check=False,env=child_env)
+            capture_output=True,text=True,timeout=BJ_PROVIDER_TIMEOUT if name=='stock_info_bj_name_code' else PROVIDER_TIMEOUT,check=False,env=child_env)
         if getattr(result,'returncode',0):
             try:category=json.loads(getattr(result,'stderr',''))['category']
             except Exception:category='AKSHARE_CALL_FAILED'
@@ -99,7 +100,7 @@ def call(name, _diagnostic=False, **kwargs):
     with _lock:_failures.pop(key,None)
     return frame
 
-def install_transport(requests):
+def install_transport(requests, request_timeout=REQUEST_TIMEOUT):
     from urllib.parse import urlparse
     original=requests.Session.request
     state={'category':None}
@@ -111,7 +112,7 @@ def install_transport(requests):
                 else:raise ProviderError('TLS_ERROR')
             if kwargs.get('verify') is False:raise ProviderError('TLS_ERROR')
             # AKShare sometimes explicitly passes timeout=None; setdefault did not bound it.
-            kwargs['timeout']=REQUEST_TIMEOUT
+            kwargs['timeout']=request_timeout
             response=original(self,method,url,**kwargs)
             response.raise_for_status()  # Record 403/429 BEFORE a JSON parse hides the cause.
             return response
@@ -122,14 +123,15 @@ def install_transport(requests):
     return state
 
 def financial_frame(requests, code):
+    from .data import number
     symbol=('sh' if code.startswith('6') else 'sz' if code.startswith(('0','3')) else 'bj')+code
     response=requests.get('https://quotes.sina.cn/cn/api/openapi.php/CompanyFinanceService.getFinanceReport2022',
         params={'paperCode':symbol,'source':'gjzb','type':'0','page':'1','num':'8'})
     reports=response.json()['result']['data']['report_list'];metrics={}
     for period, report in reports.items():
         for item in report['data']:
-            value=pd.to_numeric(item.get('item_value'),errors='coerce')
-            if pd.notna(value):metrics.setdefault(item['item_title'],{'指标':item['item_title']})[period]=float(value)
+            value=number(item.get('item_value'))
+            if value is not None:metrics.setdefault(item['item_title'],{'指标':item['item_title']})[period]=value
     return pd.DataFrame(metrics.values())
 
 def worker(name, kwargs):
@@ -138,7 +140,7 @@ def worker(name, kwargs):
         if name not in REQUIRED:raise ProviderError('AKSHARE_VERSION_INCOMPATIBLE')
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             import requests
-            state=install_transport(requests)
+            state=install_transport(requests, (5, 40) if name=='stock_info_bj_name_code' else REQUEST_TIMEOUT)
             import akshare
             if name=='government_policy_index':
                 from .data import fetch_policy_index

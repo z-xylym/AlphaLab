@@ -8,15 +8,17 @@ def admin_security_master(data,repo):
     with repo.db.begin() as conn:
         repo.auth.principal(conn,repo.token,admin=True)
     st.subheader('基础证券名单')
-    st.caption('独立交易所公开名单，不依赖全市场实时快照；仅更新公共缓存，不包含实时价格。部分交易所成功不代表全市场覆盖。')
+    st.caption('独立交易所公开名单，不依赖全市场实时快照；仅更新公共缓存，不包含实时价格。原刷新按钮仅刷新沪深，北交所需单独刷新；部分交易所成功不代表全市场覆盖。')
     result=None
-    if st.button('更新基础证券名单',key='admin_refresh_security_master'):
+    refresh_main=st.button('更新基础证券名单',key='admin_refresh_security_master')
+    refresh_bj=st.button('单独更新北交所名单（最长45秒）',key='admin_refresh_security_master_bj')
+    if refresh_main or refresh_bj:
         # Reauthorize immediately before requesting or writing public data.
         with repo.db.begin() as conn:
             repo.auth.principal(conn,repo.token,admin=True)
         try:
             with st.spinner('读取交易所公开名单并保存公共缓存，失败时保留旧名单…'):
-                result=data.security_master(refresh=True)
+                result=data.security_master(exchange='BJ' if refresh_bj else ('SH','SZ'),refresh=True)
             invalidate()
             fresh=[x for x in result['items'] if not x['stale']]
             if fresh:
@@ -40,6 +42,12 @@ def admin_security_master(data,repo):
         except Exception:
             st.error('基础证券名单状态暂不可读取，未清除已有缓存。请稍后重试。')
             return
+    if refresh_main or refresh_bj:
+        try:
+            saved=data.security_master(cached_only=True)
+            refreshed={'BJ'} if refresh_bj else {'SH','SZ'}
+            result=dict(result,items=[x for x in result['items'] if x['exchange'] in refreshed]+[x for x in saved['items'] if x['exchange'] not in refreshed])
+        except DataUnavailable:pass
     st.write('是否已有缓存：是')
     st.metric('股票数量',len(result['items']))
     groups={}

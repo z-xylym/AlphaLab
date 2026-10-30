@@ -79,21 +79,21 @@ def test_admin_refresh_persists_real_adapter_result_and_status_survives_rerun(sy
     monkeypatch.setattr(MarketData, 'spot', lambda *a, **k: pytest.fail('Must not depend on snapshots'))
     next(x for x in app.button if x.label == '更新基础证券名单').click().run(timeout=20)
     assert not app.exception and not app.error
-    assert sorted(seen) == sorted(EXCHANGES)
+    assert sorted(seen) == sorted(set(EXCHANGES)-{'stock_info_bj_name_code'})
     message = next(x.value for x in app.success if '更新成功' in x.value)
-    assert all(x in message for x in ('股票数量：3', '来源：', '数据时间', '交易所公开证券列表'))
+    assert all(x in message for x in ('股票数量：2', '来源：', '数据时间', '交易所公开证券列表'))
     with auth.db.connect() as conn:
         cached = conn.execute(select(cache).where(cache.c.key.like('master:v1:%'))).mappings().all()
         master = conn.execute(select(public['stock_master'])).mappings().all()
-    assert len(cached) == 3 and len(master) == 3
+    assert len(cached) == 2 and len(master) == 2
     assert all(x['payload']['price'] is None for x in master)
     assert before == (admin.list('watchlist_items'), user.list('user_preferences'))
     monkeypatch.setattr(provider, 'call', lambda *a, **k: pytest.fail('Rerun must use cache'))
     app.run(timeout=20)
     assert not app.exception
-    assert next(x.value for x in app.metric if x.label == '股票数量') == '3'
+    assert next(x.value for x in app.metric if x.label == '股票数量') == '2'
     status = app.dataframe[0].value
-    assert set(status['交易所']) == {'SH', 'SZ', 'BJ'}
+    assert set(status['交易所']) == {'SH', 'SZ'}
     assert not status['stale'].any()
     assert status['抓取时间'].str.len().min() > 10
 
@@ -171,7 +171,7 @@ def test_partial_refresh_counts_only_new_records_and_keeps_old_source_times(syst
     status = app.dataframe[0].value.set_index('交易所')
     assert not status.loc['SH', 'stale']
     for exchange in ('SZ', 'BJ'):
-        assert status.loc[exchange, 'stale']
+        assert bool(status.loc[exchange, 'stale']) == (exchange=='SZ')
         assert status.loc[exchange, '抓取时间'] == old[exchange]
 
 
@@ -190,3 +190,28 @@ def test_admin_status_reads_saved_stock_master_when_public_cache_absent(system, 
     assert set(status['抓取时间']) == {x['fetched_at'] for x in original['items']}
     with auth.db.connect() as conn:
         assert not conn.execute(select(cache)).first()
+
+
+def test_bj_refresh_is_separate_from_sh_sz_and_retains_timeout_diagnostic(system, monkeypatch):
+    seen=[]
+    def call(name, **kwargs):
+        seen.append(name)
+        return official_fixture(name, **kwargs)
+    monkeypatch.setattr(provider, 'call', call)
+    app=open_admin(system, monkeypatch)
+    next(x for x in app.button if x.label=='更新基础证券名单').click().run(timeout=20)
+    assert set(seen)=={'security_master_sh','stock_info_sz_name_code'}
+    seen.clear()
+    next(x for x in app.button if x.key=='admin_refresh_security_master_bj').click().run(timeout=20)
+    assert seen==['stock_info_bj_name_code']
+    assert not app.exception and not app.error
+    assert any('股票数量：1' in x.value for x in app.success)
+    assert set(app.dataframe[0].value['交易所'])=={'SH','SZ','BJ'}
+    def timeout(*a, **k):raise provider.ProviderError('PROVIDER_TIMEOUT')
+    monkeypatch.setattr(provider, 'call', timeout)
+    next(x for x in app.button if x.key=='admin_refresh_security_master_bj').click().run(timeout=20)
+    assert not app.exception
+    assert any('更新失败' in x.value for x in app.error)
+    status=app.dataframe[0].value.set_index('交易所')
+    assert status.loc['BJ','stale']
+    assert not status.loc['SH','stale'] and not status.loc['SZ','stale']
