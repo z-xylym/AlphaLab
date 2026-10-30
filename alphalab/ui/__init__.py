@@ -10,7 +10,9 @@ from .components import STYLES, DISCLAIMER, brand
 from .login import login_screen
 from .home import home
 from .stock import stock_research
-from .discovery import sectors, screener
+from .market import market
+from .workspace import watchlist, research_library
+from .navigation import NAVIGATION
 from .account import mine
 from .admin import admin_security_master
 
@@ -36,14 +38,16 @@ def main():
                 brand()
             with navigation:
                 with st.container(key='primary_nav'):
-                    page = st.radio('导航', ['首页', '行业', '选股', '个股', '我的'],
+                    page = st.radio('导航', NAVIGATION,
                                     horizontal=True, label_visibility='collapsed', key='navigation')
         if page == '首页':
             home(data, repo, ai, pref['level'])
-        elif page == '行业':
-            sectors(data, repo, ai, pref['level'])
-        elif page == '选股':
-            screener(data, repo, ai, pref['level'])
+        elif page == '市场':
+            market(data, repo, ai, pref['level'])
+        elif page == '自选':
+            watchlist(data, repo)
+        elif page == 'AI研究':
+            research_library(repo)
         elif page == '个股':
             stock_research(data, repo, ai, pref['level'])
         else:

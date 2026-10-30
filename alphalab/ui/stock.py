@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 from ..data import DataUnavailable, number
-from .components import data_meta, date_label, empty_state, fmt, metric_grid, chart_style
+from .components import data_meta, date_label, empty_state, fmt, metric_grid, chart_style, planned_panel
 from .reads import CachedResearch, invalidate, remember
 
 GLOSSARY = {
@@ -88,6 +88,9 @@ def stock_research(data, repo, ai, level):
             if st.button('加入自选', key='watch_'+code):
                 repo.put('watchlist_items', code, {'code': code, 'name': stock['name']})
                 st.success('已加入自选')
+    reports=repo.list('research_reports',limit=100)
+    has_report=any(r['payload'].get('code')==code for r in reports)
+    st.caption('研究状态 · '+('已有历史AI研究，可在AI研究页签核对' if has_report else '待形成公司研究'))
     data_meta(stock, price_missing=number(stock.get('price')) is None)
     if number(stock.get('price')) is not None:
         st.caption('最新可用价格 '+fmt(stock['price'], ' 元'))
@@ -111,9 +114,24 @@ def stock_research(data, repo, ai, level):
         else:
             st.caption('暂未取得新数据，保留已有记录。')
 
+    # Read existing public caches only; a missing price cannot block the other metrics.
+    quote_data=optional(lambda: remember('watch_quotes', view.spot))
+    quote=next((x for x in quote_data['items'] if x['code']==code),{}) if quote_data else {}
+    financial=optional(lambda: view.financials(code))
+    summary=view.financial_summary(financial) if financial else {}
+    change=number(quote.get('change_pct'))
+    tone='up' if change is not None and change>0 else 'down' if change is not None and change<0 else 'neutral'
+    core=[('已有价格',fmt(quote.get('price'),' 元'),'非实时 · 缺失不影响研究',''),
+          ('涨跌幅',fmt(change,'%'),'上次保存的行情' if quote else '暂无可靠快照',tone)]
+    for name in GLOSSARY:
+        item=summary.get(name,{})
+        unit=' %' if name in ('ROE','毛利率','资产负债率') else ''
+        core.append((name,fmt(item.get('value'),unit),'报表期 '+field(item.get('report_date')),''))
+    with st.container(key='core_metrics'):metric_grid(core,columns=4)
+
     # A native radio styled as tabs provides true conditional execution in Streamlit 1.50.
     with st.container(key='research_tabs'):
-        tab = st.radio('研究内容', ['概览', '走势', '财务', '主营', 'AI研究'], horizontal=True,
+        tab = st.radio('研究内容', ['概览', '走势', '财务', '主营', 'AI研究', '预警'], horizontal=True,
                        key='research_tab', label_visibility='collapsed')
     if tab == '概览':
         info = optional(lambda: view.company(code))
@@ -123,9 +141,11 @@ def stock_research(data, repo, ai, level):
         metric_grid([(label, field(value), '', '') for label, value in (
             ('上市时间', date_label(company.get('上市时间'))), ('所属行业', company.get('行业')),
             ('总股本', company.get('总股本')), ('最新数据日期', latest))], columns=4)
-        st.subheader('核心财务')
-        financial = optional(lambda: view.financials(code))
-        financial_metrics(view, financial, compact=True)
+        with st.expander('资料来源与研究口径'):
+            st.caption('顶部指标只读已有缓存，财务报告期与价格日期分别标注。完整财务请查看财务页签。')
+            data_meta(info)
+            data_meta(financial)
+            data_meta(history)
     elif tab == '走势':
         history = optional(lambda: view.history(code))
         if not history:
@@ -156,6 +176,12 @@ def stock_research(data, repo, ai, level):
         fields = [k for k in ('主营构成', '分类类型', '主营收入', '收入比例', '主营利润', '报告日期') if k in frame]
         st.dataframe(frame[fields] if fields else frame, hide_index=True, use_container_width=True)
         st.caption('按披露报告期展示；不同分类口径不可叠加。')
+    elif tab == '预警':
+        st.subheader('预警与跟踪')
+        planned_panel('条件触发与风险提示', '规划中；当前未监测或发送通知，也未创建任何价格或财务阈值。')
+        with st.expander('研究期限与观察框架'):
+            for horizon in ('短期观察','中期经营','长期价值'):
+                planned_panel(horizon, '规划中；后续将记录关注指标与判断失效条件，当前不生成期限观点。')
     else:
         from .company_ai import company_ai
         company_ai(view, stock, ai)

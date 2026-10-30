@@ -30,6 +30,15 @@ def date_label(value):
         return text[:10] if re.fullmatch(r'\d{4}-\d{2}-\d{2}.*', text) else '—'
 
 
+def time_label(value):
+    if not value:return '—'
+    try:
+        parsed=datetime.fromisoformat(str(value))
+        if parsed.tzinfo:parsed=parsed.astimezone(ZoneInfo('Asia/Shanghai'))
+        return parsed.strftime('%Y-%m-%d %H:%M')
+    except ValueError:return date_label(value)
+
+
 def source_label(data):
     text = str(data.get('provider') or data.get('source') or '')
     for needle, label in (('gov.cn', '中国政府网'), ('主营', '东方财富主营构成'),
@@ -43,10 +52,10 @@ def source_label(data):
 def data_meta(data, price_missing=False):
     if not data:
         return
-    stale = '<span class="status-tag">历史缓存</span>' if data.get('stale') else ''
+    stale = '<span class="status-tag">历史缓存</span>' if data.get('stale') else '<span class="status-tag neutral">已保存</span>'
     price = '<span class="status-tag neutral">实时价格暂不可用</span>' if price_missing else ''
     st.html(f'<div class="data-meta">{escape(source_label(data))} · 更新于 '
-            f'{escape(date_label(data.get("fetched_at")))} {stale} {price}</div>')
+            f'{escape(time_label(data.get("fetched_at")))} {stale} {price}</div>')
 
 
 source = data_meta
@@ -66,10 +75,14 @@ def metric_grid(items, columns=3):
     """(label, value, subtext, direction) tuples; no untrusted markup."""
     cells = []
     for label, value, subtext, direction in items:
-        tone = 'up' if direction == 'up' else 'down' if direction == 'down' else ''
+        tone = direction if direction in ('up','down','neutral') else ('neutral' if str(value)=='—' else '')
+        note=escape(str(subtext))
+        if tone and re.match(r'[+-]\d',str(subtext)):
+            first,sep,rest=str(subtext).partition(' · ')
+            note=f'<span class="{tone}">{escape(first)}</span>'+(' · '+escape(rest) if sep else '')
         cells.append(f'<div class="metric-cell"><span class="metric-label">{escape(str(label))}</span>'
-                     f'<strong>{escape(str(value))}</strong><span class="metric-sub {tone}">'
-                     f'{escape(str(subtext))}</span></div>')
+                     f'<strong class="metric-value {tone}">{escape(str(value))}</strong><span class="metric-sub">'
+                     f'{note}</span></div>')
     st.html(f'<div class="metric-grid cols-{int(columns)}">'+''.join(cells)+'</div>')
 
 
@@ -78,7 +91,7 @@ def show_stock(x):
     change = number(x.get('change_pct'))
     st.caption('最新可用价格 '+fmt(x.get('price'), ' 元'))
     if change is not None:
-        st.markdown(f":{'red' if change >= 0 else 'green'}[{change:+.2f}%]")
+        st.markdown(f":{'red' if change > 0 else 'green'}[{change:+.2f}%]") if change else st.caption('平盘 0.00%')
     if x.get('reason'):
         st.write(x['reason'])
     if x.get('risk'):
@@ -123,3 +136,21 @@ def chart_style(figure):
                          yaxis=dict(gridcolor=tokens['border'], zeroline=False))
     figure.update_traces(line_color=tokens['accent'])
     return figure
+
+
+def section_intro(eyebrow, title, detail):
+    st.html(f'<div class="section-intro"><span>{escape(eyebrow)}</span>'
+            f'<h2>{escape(title)}</h2><p>{escape(detail)}</p></div>')
+
+
+def research_card(title, subtitle, detail='', status=''):
+    st.html(f'<div class="research-card"><div class="card-eyebrow">{escape(subtitle)}</div>'
+            f'<strong>{escape(title)}</strong><p>{escape(detail)}</p>'
+            f'<span class="status-tag neutral">{escape(status)}</span></div>')
+
+
+def planned_panel(title, detail):
+    with st.container(border=True):
+        st.caption('规划中 · 尚未启用')
+        st.markdown('**'+title+'**')
+        st.caption(detail)
