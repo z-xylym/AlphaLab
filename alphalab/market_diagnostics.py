@@ -6,6 +6,8 @@ from . import provider
 PROBES = {
     'security_master_sh': {}, 'stock_info_sz_name_code': {}, 'stock_info_bj_name_code': {},
     'stock_zh_index_daily': {'symbol':'sh000001'},
+    'sina_index_sz399001': {'symbol':'sz399001'},
+    'sina_index_sz399006': {'symbol':'sz399006'},
     'government_policy_index': {},
     'stock_zh_a_spot_em': {}, 'stock_zh_a_spot': {},
     'stock_zh_index_daily_em': {'symbol':'sh000001'},
@@ -33,7 +35,7 @@ def probe(endpoint):
             kwargs.update(start_date=(end-timedelta(days=90)).strftime('%Y%m%d'),end_date=end.strftime('%Y%m%d'))
         try:
             started=time.monotonic()
-            provider.call(endpoint,_diagnostic=True,**kwargs)
+            provider.call('stock_zh_index_daily' if endpoint.startswith('sina_index_') else endpoint,_diagnostic=True,**kwargs)
             category='CONNECTED'
         except Exception as exc:category=provider.classify(exc)
         _results[endpoint]=(time.monotonic(),category,round(time.monotonic()-started,3))

@@ -36,7 +36,7 @@ def parse_index(content,base=INDEX):
             'content':'官方索引记录；具体措施、发文部门及生效状态须另行核对原文。'}
     for a in soup.select('a[href]'):
         title=a.get('title') or a.get_text(' ',strip=True)
-        published=a.get('data-date') or a.get('data-pubtime')
+        published=a.get('data-date') or a.get('data-pubtime') or a.get('data-pubdate') or a.get('data-publish-date')
         parent=a.parent
         for _ in range(4):
             if published or parent is None:break
@@ -44,7 +44,10 @@ def parse_index(content,base=INDEX):
             links={x.get('href') for x in parent.select('a[href]')}
             if len(links)>1:break
             t=parent.find('time')
-            published=(t.get('datetime') if t else None) or dated(parent.get_text(' ',strip=True))
+            # Dates in a headline are not publication metadata. Only inspect text outside links.
+            outside=' '.join(str(text) for text in parent.find_all(string=True) if not text.find_parent('a'))
+            dates={dated(match.group()) for match in DATE.finditer(outside)}-{None}
+            published=(t.get('datetime') or t.get_text(' ',strip=True) if t else None) or parent.get('data-pubdate') or parent.get('data-pubtime') or parent.get('data-date') or (next(iter(dates)) if len(dates)==1 else None)
             parent=parent.parent
         add(title,a['href'],published)
     def walk(value,depth=0):
@@ -55,7 +58,7 @@ def parse_index(content,base=INDEX):
             fields={str(k).lower():v for k,v in value.items()}
             def first(names):return next((fields[x.lower()] for x in names if fields.get(x.lower()) is not None),'')
             add(first(('title','TITLE','headline','docTitle','DOCTITLE')),first(('url','URL','link','docUrl','DOCURL')),
-                first(('datePublished','pubDate','pubtime','publishTime','publishedTime','published_at','PUBDATE','DOCPUBTIME')))
+                first(('datePublished','pubDate','pubtime','publishTime','publishedTime','published_at','publishDate','pub_date','publicationDate','发布日期','PUBDATE','DOCPUBTIME')))
             for row in value.values():
                 if isinstance(row,(dict,list)):walk(row,depth+1)
     text=content.decode('utf-8',errors='replace') if isinstance(content,bytes) else content

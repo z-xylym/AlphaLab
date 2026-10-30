@@ -28,6 +28,13 @@ def number(value):
     except (ValueError, TypeError):
         return None
 
+def financial_label(value):
+    # Normalize presentation only; do not conflate per-share, growth or adjusted metrics.
+    label=str(value).translate(str.maketrans({'（':'(', '）':')', '％':'%'}))
+    label=re.sub(r'\s+', '', label)
+    return re.sub(r'\((?:%|元)\)$', '', label)
+
+
 def fetch_policy_index():
     from .policy_parser import INDEX, parse_index, official
     items=[]
@@ -108,11 +115,16 @@ class MarketData:
         # Both snapshot feeds have failed production checks. Do not auto retry them.
         return self.cache_only('spot:v1',force_stale=True)
     def indices(self,refresh=False):
+        diagnostics={}
         def load_one(pair):
             code,name=pair
             def load():
                 from .provider import call
-                df=call('stock_zh_index_daily',symbol=code)
+                try:df=call('stock_zh_index_daily',symbol=code)
+                except Exception as exc:
+                    from .provider import classify
+                    diagnostics[code]=classify(exc)
+                    raise
                 df['date']=pd.to_datetime(df['date'],errors='coerce')
                 df=df[df['date'].notna() & (df['date'].dt.date<=today())].sort_values('date').tail(2)
                 if len(df)<2:raise DataUnavailable('日线不足。')
@@ -124,7 +136,9 @@ class MarketData:
             key='index:sina:'+code
             try:
                 return self.cached(key,3600,'新浪指数日线（AKShare）',load,refresh=True) if refresh else self.cache_only(key)
-            except DataUnavailable:return None
+            except DataUnavailable:
+                diagnostics.setdefault(code,'NO_RELIABLE_CACHE')
+                return None
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=3) as executor:
             results=list(executor.map(load_one,[('sh000001','上证指数'),('sz399001','深证成指'),('sz399006','创业板指')]))
@@ -132,41 +146,48 @@ class MarketData:
         if not available:raise DataUnavailable('指数日线暂无缓存；可手动尝试新浪日线，不自动等待已失败的东方财富。')
         return {'items':[dict(x,source=r['source'],fetched_at=r['fetched_at'],stale=r['stale']) for r in available for x in r['items']],
                 'source':'新浪指数日线（AKShare）','fetched_at':min(r['fetched_at'] for r in available),
-                'stale':any(r['stale'] for r in available),'date_note':'最近已发布日线，非实时；缺失指数不补值。'}
+                'diagnostics':diagnostics,'stale':any(r['stale'] for r in available),'date_note':'最近已发布日线，非实时；缺失指数不补值。'}
     def security_master(self,exchange=None,refresh=False,cached_only=False):
         if cached_only and refresh:
             raise ValueError('Cached-only reads cannot refresh.')
-        exchanges=[exchange] if exchange else ['SH','SZ','BJ']
+        exchanges=([exchange] if isinstance(exchange,str) else list(exchange)) if exchange else ['SH','SZ','BJ']
+        if any(ex not in ('SH','SZ','BJ') for ex in exchanges):raise ValueError('Unknown exchange.')
         methods={'SH':'security_master_sh','SZ':'stock_info_sz_name_code','BJ':'stock_info_bj_name_code'}
         def one(ex):
+            def safe_item(x, **metadata):
+                item=dict(x, **metadata)
+                # Old v1 caches persisted A-share capital under this incorrect name.
+                if ex=='SZ':item.pop('total_shares',None)
+                return item
             def load():
                 from .provider import call
                 df=call(methods[ex])
                 df=df.rename(columns={'证券代码':'code','证券简称':'name','A股代码':'code','A股简称':'name',
-                    'A股上市日期':'listing_date','上市日期':'listing_date','所属行业':'industry','A股总股本':'total_shares'})
+                    'A股上市日期':'listing_date','上市日期':'listing_date','所属行业':'industry','总股本':'total_shares'})
                 df['code']=df['code'].astype(str).str.replace(r'\.0$','',regex=True).str.zfill(6)
                 df=df[df['code'].str.fullmatch(r'\d{6}') & df['name'].notna()].copy()
                 prefix={'SH':('6',),'SZ':('0','3'),'BJ':('4','8','9')}[ex]
                 df=df[df['code'].str.startswith(prefix)].copy()
                 df['name']=df['name'].astype(str).str.strip()
                 df=df[df['name'].str.len()>0]
+                if ex=='SZ':df=df.drop(columns=['total_shares'],errors='ignore')
                 df['exchange']=ex
                 df['price']=None  # Master data must never masquerade as a price snapshot.
                 items=records(df[[k for k in ('code','name','exchange','listing_date','industry','total_shares','price') if k in df.columns]])
                 return {'items':items,'date_note':'交易所基础证券名单，不含实时价格；仅包含本次成功返回的交易所。'}
             try:
-                data=(self.cache_only('master:v1:'+ex) if cached_only else
+                data=(self.cache_only('master:v1:'+ex) if cached_only or (ex=='BJ' and not refresh) else
                       self.cached('master:v1:'+ex,86400,'交易所公开证券列表（AKShare）:'+ex,load,'stock_master',refresh=refresh))
-                return [dict(x,source=data['source'],fetched_at=data['fetched_at'],stale=data['stale'],price=None) for x in data['items']]
+                return [safe_item(x,source=data['source'],fetched_at=data['fetched_at'],stale=data['stale'],price=None) for x in data['items']]
             except DataUnavailable:
                 with self.db.connect() as c:
                     rows=c.execute(select(public['stock_master'])).mappings().all()
                 items=[]
                 for r in rows:
                     x=r['payload'];code=str(x.get('code',''))
-                    inferred='SH' if code.startswith('6') else 'SZ' if code.startswith(('0','3')) else 'BJ'
+                    inferred='SH' if code.startswith('6') else 'SZ' if code.startswith(('0','3')) else 'BJ' if code.startswith(('4','8','9')) else None
                     if re.fullmatch(r'\d{6}',code) and x.get('name') and inferred==ex:
-                        items.append(dict(x,exchange=ex,price=None,source=r['source'],fetched_at=r['fetched_at'].isoformat(),stale=True))
+                        items.append(safe_item(x,exchange=ex,price=None,source=r['source'],fetched_at=r['fetched_at'].isoformat(),stale=True))
                 return items
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=3) as executor:rows=[x for group in executor.map(one,exchanges) for x in group]
@@ -235,13 +256,13 @@ class MarketData:
     def quality_metrics(data):
         metrics={}
         for row in data['items']:
-            label=str(row.get('指标',''))
+            label=financial_label(row.get('指标',''))
             dates=sorted([k for k in row if re.fullmatch(r'\d{8}|\d{4}-\d{2}-\d{2}',k)],reverse=True)
             if not dates:continue
             value=number(row[dates[0]])
-            if label in ('净资产收益率(ROE)','净资产收益率(ROE)(%)','净资产收益率'):
+            if label in ('净资产收益率(ROE)','净资产收益率(ROE)(%)','净资产收益率','加权净资产收益率','加权平均净资产收益率','净资产收益率(加权)','净资产收益率(加权平均)','净资产收益率-加权'):
                 metrics['roe']=value
-            if label in ('归母净利润','归母净利润(元)','净利润'):
+            if label in ('归母净利润','归母净利润(元)','净利润','归属于母公司股东的净利润','归属母公司股东的净利润'):
                 metrics['profit']=value
         return metrics
     def policy_detail(self,url):
@@ -281,12 +302,12 @@ class MarketData:
     @staticmethod
     def financial_summary(data):
         aliases={
-            '营业收入':('营业总收入','营业收入'), '净利润':('归母净利润','归属母公司股东的净利润','净利润'),
-            'ROE':('净资产收益率(ROE)','净资产收益率'), '毛利率':('销售毛利率','毛利率'),
+            '营业收入':('营业总收入','营业收入'), '净利润':('归母净利润','归属母公司股东的净利润','归属于母公司股东的净利润','净利润'),
+            'ROE':('净资产收益率(ROE)','净资产收益率','加权净资产收益率','加权平均净资产收益率','净资产收益率(加权)','净资产收益率(加权平均)','净资产收益率-加权'), '毛利率':('销售毛利率','毛利率'),
             '资产负债率':('资产负债率',), '经营现金流':('经营活动产生的现金流量净额','经营活动现金流量净额')}
         result={name:{'value':None,'report_date':None} for name in aliases}
         for row in data['items']:
-            label=str(row.get('指标','')).replace('(%)','').replace('（%）','').replace('(元)','')
+            label=financial_label(row.get('指标',''))
             dates=sorted([k for k in row if re.fullmatch(r'\d{8}|\d{4}-\d{2}-\d{2}',k)],reverse=True)
             if not dates:continue
             for name,options in aliases.items():
