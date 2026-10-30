@@ -64,7 +64,16 @@ def test_research_industry_screen_and_private_screens(system,monkeypatch):
     next(x for x in app.button if x.label=='加入自选').click().run(timeout=20)
     assert b.get('watchlist_items','600001')['name']=='测试夹具公司'
     app.radio(key='research_tab').set_value('AI研究').run(timeout=20)
-    next(x for x in app.button if x.label=='生成研究报告').click().run(timeout=20)
+    import json
+    from alphalab.company_report import payload, SECTIONS
+    from alphalab.db import now
+    def company_report(self,context,regenerate=False):
+        answer=json.dumps({'sections':[{'title':title,'facts':[],'analysis':['自动化测试夹具，非真实报告'],'missing_data':[]} for title in SECTIONS]})
+        return payload(context,answer,self.settings.deepseek_model,now().isoformat()),False
+    monkeypatch.setattr(AI,'company_report',company_report)
+    monkeypatch.setenv('DEEPSEEK_API_KEY','test-not-real-key')
+    app.run(timeout=20)
+    next(x for x in app.button if x.label=='生成AI研究').click().run(timeout=20)
     assert any('自动化测试夹具' in x.value for x in app.markdown)
     app.radio(key='navigation').set_value('我的').run(timeout=20)
     for section in ['自选','聊天','研究历史','模拟交易','策略回测','个人设置','记忆管理']:

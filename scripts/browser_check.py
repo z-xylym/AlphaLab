@@ -102,7 +102,7 @@ main()
                     buttons = page.get_by_role('button').evaluate_all('''elements => elements.map(el => ({text:el.innerText.trim(), height:el.getBoundingClientRect().height}))''')
                     for button in buttons:
                         if button['height'] and button['text'] in (
-                            '登录', '搜索', '加入自选', '更新数据', '更新研究数据', '生成研究报告', '退出登录'):
+                            '登录', '搜索', '加入自选', '更新数据', '更新研究数据', '生成AI研究', '退出登录'):
                             assert button['height'] >= 44, button['text']
                     if page.get_by_role('radiogroup', name='导航', exact=True).count():
                         for label in ('首页', '行业', '选股', '个股', '我的'):
@@ -151,7 +151,7 @@ main()
                 page.locator('[data-testid="stDataFrame"]').wait_for()
                 capture('stock-business')
                 research_tab('AI研究')
-                page.get_by_role('button', name='生成研究报告', exact=True).wait_for()
+                page.get_by_role('button', name='生成AI研究', exact=True).wait_for()
                 capture('stock-ai')
                 nav('我的')
                 page.get_by_role('heading', name='我的', exact=True).wait_for()
