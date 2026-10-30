@@ -169,7 +169,7 @@ def backtest_page(data,repo):
 
 def mine(data,repo,ai,auth,user,pref=None):
     st.header('我的')
-    st.caption('自选、持仓与研究记录')
+    st.caption('账户、持仓与研究工具；自选观察和AI研究已拥有独立入口。')
     with st.expander('账户'):
         st.caption('当前账户已登录')
         if st.button('退出登录'):
@@ -178,9 +178,9 @@ def mine(data,repo,ai,auth,user,pref=None):
     section=st.selectbox('我的研究空间',['持仓','自选','聊天','研究历史','模拟交易','策略回测','个人设置','记忆管理']+(['管理后台'] if user['is_admin'] else []))
     if section=='持仓':portfolio(data,repo)
     elif section=='自选':
-        for r in repo.list('watchlist_items'):
-            st.write(r['payload']['name']+' · '+r['payload']['code'])
-            if st.button('移除',key='remove_'+r['key']):repo.remove('watchlist_items',r['key']);st.rerun()
+        from .navigation import open_page
+        st.caption('自选已移至主导航，集中查看已有价格和研究状态。')
+        st.button('打开自选观察',on_click=open_page,args=('自选',))
     elif section=='聊天':chat(repo,ai,pref['level'])
     elif section=='研究历史':history_page(repo,data)
     elif section=='模拟交易':simulation(data,repo)
@@ -192,8 +192,8 @@ def mine(data,repo,ai,auth,user,pref=None):
                 st.json(r['payload'])
                 if st.button('删除记忆',key='mem_'+r['key']):repo.remove('user_memories',r['key']);st.rerun()
     elif section=='个人设置':
-        level=st.selectbox('知识水平',['零基础','进阶','专业'],index=['零基础','进阶','专业'].index(pref['level']))
-        if st.button('保存偏好'):repo.put('user_preferences','profile',{'level':level});st.success('已保存。')
+        from .preferences import preferences_form
+        preferences_form(repo,data,pref)
         with st.form('password'):
             old=st.text_input('原密码',type='password');new=st.text_input('新密码',type='password')
             if st.form_submit_button('修改密码并使所有会话失效'):

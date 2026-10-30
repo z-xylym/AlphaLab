@@ -22,7 +22,7 @@ def test_login_home_navigation_and_no_private_access(system,monkeypatch):
     app.session_state['token']=b.token
     app.run(timeout=20)
     assert not app.exception
-    assert app.radio(key='navigation').options==['首页','行业','选股','个股','我的']
+    assert app.radio(key='navigation').options==['首页','市场','自选','个股','AI研究','我的']
     app.radio(key='navigation').set_value('我的').run(timeout=20)
     assert '管理后台' not in app.selectbox[0].options
     assert not app.exception
@@ -52,9 +52,10 @@ def test_research_industry_screen_and_private_screens(system,monkeypatch):
     monkeypatch.setattr(AI,'generate',lambda *a,**k:('已核实事实：自动化测试夹具。',False))
     app=AppTest.from_file('app.py');app.session_state['token']=b.token;app.run(timeout=20)
     assert not app.exception and not app.error
-    app.radio(key='navigation').set_value('行业').run(timeout=20)
+    app.radio(key='navigation').set_value('市场').run(timeout=20)
+    app.radio(key='market_section').set_value('行业观察').run(timeout=20)
     assert not app.exception and not app.error
-    app.radio(key='navigation').set_value('选股').run(timeout=20)
+    app.radio(key='market_section').set_value('选股观察').run(timeout=20)
     next(x for x in app.button if x.label=='生成观察名单').click().run(timeout=20)
     assert not app.exception and not app.error and b.list('screening_runs')
     app.radio(key='navigation').set_value('个股').run(timeout=20)

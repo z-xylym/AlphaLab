@@ -8,30 +8,40 @@ from .components import source, show_stock, ai_button, fetch_panel
 from .home import policy_cards
 
 def sectors(data,repo,ai,level):
+    from ..personalization import industry_catalog
+    from .reads import remember
+    from .navigation import open_stock
+    from .components import empty_state, research_card, data_meta
     st.header('行业观察')
-    category=st.radio('分类类型',['行业分类（东方财富口径）','投资主题（概念标签）'])
-    concept=category.startswith('投资')
-    board=fetch_panel(lambda:data.sectors(concept))
-    if not board:return
-    name=st.selectbox('选择行业或主题',[x['name'] for x in board['items']])
-    if st.button('关注此行业',use_container_width=True):
-        repo.put('user_memories','sector:'+name,{'kind':'followed_sector','name':name,'category':category})
-        st.success('已保存。')
-    members=fetch_panel(lambda:data.members(name,concept))
-    if members:
-        for x in members['items'][:10]:show_stock(x)
-        st.caption('仅展示前10个接口返回成分，不代表推荐或龙头排名。')
-    policies=fetch_panel(data.policies)
-    if policies:
-        relevant=[p for p in policies['items'] if name in p['title']]
-        policy_cards(relevant)
-        if not relevant:st.info('当前官方索引中暂无标题匹配政策；不代表没有相关政策。')
-        if relevant and st.button('核对政策全文并分析关联',use_container_width=True):
-            detail=data.policy_detail(relevant[0]['url'])
-            answer,_=ai.generate('policy',f'{name}相关政策，区分事实与潜在影响',{'policy':detail,'members':dict(members,items=members['items'][:10]) if members else None,'note':'仅候选名单，未验证每家公司的主营业务关联'},level)
-            st.markdown(answer)
-    if members:
-        ai_button(ai,'sector','用大白话解释这个行业',{'sector':name,'category':category,'members':dict(members,items=members['items'][:10])},name,level,key='sector_'+name)
+    st.caption('按已有明确分类浏览公司；行业分类是业务视角，不代表投资建议。没有分类的公司不会由AI补入。')
+    catalog=remember('industry_catalog',lambda:industry_catalog(data.db))
+    query=st.text_input('搜索行业',placeholder='例如：食品饮料、银行；无需股票代码')
+    names=[name for name in catalog['industries'] if query.strip().lower() in name.lower()]
+    st.caption(f"已有可靠行业 {len(catalog['industries'])} 个 · 当前匹配 {len(names)} 个")
+    if not names:
+        empty_state('暂无匹配的可靠行业','可调整关键词；系统不会猜测公司属于哪个行业。')
+        return
+    name=st.selectbox('选择行业',names)
+    data_meta(catalog['industry_sources'][name])
+    codes=catalog['industries'][name]
+    if not codes:
+        empty_state('已有行业名称，暂无可靠公司名单','名单补齐前不展示推测成分。')
+        return
+    st.caption(f'已保存 {len(codes)} 家公司，按代码排序；不代表完整市场覆盖或公司排名。')
+    pages=(len(codes)+19)//20
+    page=st.number_input('行业股票页',min_value=1,max_value=pages,value=1,step=1) if pages>1 else 1
+    for code in codes[(page-1)*20:page*20]:
+        stock=catalog['stocks'][code]
+        with st.container(border=True):
+            research_card(stock['name'],code+' · '+name,'已有明确行业归属；价格缺失不影响进入研究。','公司观察')
+            data_meta(stock)
+            quote=catalog['quotes'].get(code,{})
+            if quote:
+                from .components import fmt
+                st.caption('已有价格 '+fmt(quote.get('price'),' 元')+' · 涨跌幅 '+fmt(quote.get('change_pct'),'%'))
+                data_meta(catalog['quote_metadata'])
+            st.button('查看研究',key='industry_open_'+code,on_click=open_stock,args=(code,))
+
 
 def screener(data,repo,ai,level):
     st.header('选股观察')
@@ -40,7 +50,8 @@ def screener(data,repo,ai,level):
     industry=st.text_input('指定行业（可留空；请使用行业页的完整名称）')
     strategy=st.selectbox('研究策略',['低估值','稳健质量','趋势动量'])
     with st.expander('查看统一规则'):
-        st.json(RULES.__dict__)
+        st.caption('市盈率（PE）：价格相对盈利的比值；市净率（PB）：价格相对净资产的比值。缺少可靠值时不估算。')
+        st.caption('ROE：自有资金的盈利效率；成交额：一段时间内买卖股票的总金额。')
         st.caption('需有上市日期、成交额和价格。稳健质量还需可靠ROE和净利润；缺失值不当作0。')
     if st.button('生成观察名单',type='primary',use_container_width=True):
         result=data.members(industry) if industry.strip() else data.spot()
