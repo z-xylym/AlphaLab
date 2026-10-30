@@ -58,7 +58,7 @@ def parse_index(content,base=INDEX):
             fields={str(k).lower():v for k,v in value.items()}
             def first(names):return next((fields[x.lower()] for x in names if fields.get(x.lower()) is not None),'')
             add(first(('title','TITLE','headline','docTitle','DOCTITLE')),first(('url','URL','link','docUrl','DOCURL')),
-                first(('datePublished','pubDate','pubtime','publishTime','publishedTime','published_at','publishDate','pub_date','publicationDate','发布日期','PUBDATE','DOCPUBTIME')))
+                first(('datePublished','pubDate','pubtime','publishTime','publishedTime','published_at','publishDate','pub_date','publicationDate','发布日期','PUBDATE','DOCPUBTIME','DOCRELPUBTIME')))
             for row in value.values():
                 if isinstance(row,(dict,list)):walk(row,depth+1)
     text=content.decode('utf-8',errors='replace') if isinstance(content,bytes) else content

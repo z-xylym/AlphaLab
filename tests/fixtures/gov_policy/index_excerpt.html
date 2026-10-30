@@ -1,0 +1,103 @@
+<!-- Captured from https://www.gov.cn/zhengce/zuixin/ on 2026-10-30 UTC; list element and catalog-loading script. -->
+<ul id="list-1-ajax-id">
+</ul>
+<script>
+      var nPageCount = 0;// 总页数
+      var nPageIndex = 0;// 当前页
+      var sPageSize = 20; // 每页显示条数
+      var FY_DATA = []; // 分页数据
+
+      // 分页加载数据
+      function getFYDataFn() {
+        $.ajax({
+          async: false,
+          type: "GET",
+          url: "./ZUIXINZHENGCE.json",
+          success: function (resultP) {
+            console.log('resultP',resultP);
+            FY_DATA = resultP;
+            changeListFn();
+          },
+          error: function (e) {
+            console.log(e);
+          }
+        });
+        
+      }
+      getFYDataFn();
+
+      function changeListFn(){
+        nPageCount = Math.ceil(FY_DATA.length / sPageSize);
+        var listCounts = sPageSize * nPageIndex;//已经加载的条数
+        var articleList = [];
+        articleList = FY_DATA.slice(listCounts,(listCounts + sPageSize));
+        // createPageHTML(pageListTotal, pageCur);
+        createListFn(articleList);
+      }
+      
+      function createListFn(listArrP) {
+        var _htmlStr = '';
+        for (var i = 0; i < listArrP.length; i++) {  
+          _htmlStr += '<li>'+
+                            '<h4>'+
+                                '<a href="'+listArrP[i].URL+'" target="_blank">'+listArrP[i].TITLE+'</a>'+
+                                '<span class="date">'+listArrP[i].DOCRELPUBTIME+'</span>'+
+                            '</h4>'+
+                        '</li>'
+                        ;
+        }
+        $('#list-1-ajax-id').html(_htmlStr);
+        $("#list-1-ajax-id li:nth-child(5n) h4").addClass("line");
+        $('html,body').animate({'scrollTop':0},0);
+      }
+      
+      function createPageHTML(_nPageCount, _nCurrIndex) {
+        // sPageName = _sPageName.toLowerCase();
+        // sPageExt = _sPageExt.toLowerCase();
+        if (_nPageCount == null || _nPageCount <= 1) {
+          return;
+        }
+        if($('#gwpageID').length===0){
+            $('.list').after('<div class="gwpage" id="gwpageID"></div>');
+        }
+        var _htmlStr = '';
+        var nCurrIndex = +_nCurrIndex || 0;
+        if (nCurrIndex > 0) { // 当前页不是首页
+          var nPreIndex = nCurrIndex - 1;
+          var sPreFileExt = nPreIndex == 0 ? '' : '_' + nPreIndex;
+         _htmlStr+='<a class="pn pn-left" href="javascript:;">上一页</a>';
+        } else {
+        
+        }
+      
+ if (nCurrIndex < (_nPageCount - 1)) { // 当前页不是尾页
+          var nNextIndex = nCurrIndex + 1;
+          _htmlStr+='<a class="pn pn-right" href="javascript:;">下一页</a>';
+        } else {
+    
+        }
+      
+        $('#gwpageID').html(_htmlStr);
+      }
+      createPageHTML(nPageCount, nPageIndex);
+      
+      $(document).on('click','#gwpageID a',function(e){
+        e.preventDefault();
+        var _thisText = $(this).text();
+        if(
+            _thisText === '上一页'
+            && nPageIndex>0
+        ){
+            nPageIndex--;
+        }else if(
+            _thisText === '下一页'
+            && (nPageIndex+1)<nPageCount
+        ){
+            nPageIndex++;
+        }
+        createPageHTML(nPageCount, nPageIndex);
+        changeListFn();
+      });
+
+    //   createPageHTML(nPageCount, nPageIndex, sPageName, sPageExt);
+      </script>
