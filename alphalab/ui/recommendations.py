@@ -1,20 +1,29 @@
 import streamlit as st
-from ..personalization import industry_catalog, recommend
+from ..personalization import recommend, data_version
 from ..data import number
-from .reads import remember
+from .reads import remember, cached_catalog
 from .navigation import open_stock
 from .components import research_card, metric_grid, fmt, data_meta, empty_state
 
 
-def recommendations(data, repo):
+def recommendations(data, repo, profile=None, watched=None):
     st.subheader('为你推荐')
     st.caption('研究线索，不是买卖建议。先匹配关注方向，再看已有资料能回答什么。')
-    profile = repo.get('user_preferences', 'profile', {})
+    profile = profile if profile is not None else repo.get('user_preferences', 'profile', {})
     if not profile.get('onboarding_completed'):
         empty_state('先选择你的关注方向', '完成上方设置后，推荐理由会与你的选择对应。')
         return
-    catalog = remember('industry_catalog', lambda: industry_catalog(data.db))
-    rows = recommend(data.db, profile, catalog)
+    from ..research_context import canonical
+    import hashlib
+    catalog, catalog_version = cached_catalog(data.db)
+    selected = [name for name in profile.get('industries', []) if name in catalog['industries']] if profile.get('industries') else list(catalog['industries'])
+    codes = sorted({code for name in selected for code in catalog['industries'][name]})[:60]
+    prefixes = tuple(prefix+code+(':' if prefix == 'history:' else '') for code in codes
+                     for prefix in ('financial:', 'business:', 'history:'))
+    version = data_version(data.db, prefixes) if prefixes else ()
+    identity = hashlib.sha256(repo.token.encode()).hexdigest()
+    rows = remember(('recommend', identity, canonical(profile), catalog_version, version),
+                    lambda: recommend(data.db, profile, catalog), ttl=1800)
     with st.expander('为什么会看到这些公司？'):
         st.caption('只使用明确行业归属和已保存资料；同一行业先按资料条件、再按代码排序，不做收益评分。各关注行业轮流展示，最多6家公司。')
         st.caption('长期或稳健诉求：同报告期净利润、ROE、经营现金流均为正的资料优先，其次三项齐备，再其次资料不齐。单期为正不等于长期稳健。')
@@ -23,7 +32,7 @@ def recommendations(data, repo):
     unmatched = [name for name in profile.get('industries', []) if not catalog['industries'].get(name)]
     if unmatched:st.caption('这些方向暂缺可靠股票归属：'+'、'.join(unmatched)+'。不会猜测或补入公司。')
     if not rows:empty_state('暂时没有可解释的匹配公司', '已有数据不足时保持空白；可在市场浏览可靠行业，或修改偏好。')
-    watched = {r['payload']['code'] for r in repo.list('watchlist_items')}
+    watched = {r['payload']['code'] for r in (watched if watched is not None else repo.list('watchlist_items'))}
     for row in rows:
         with st.container(border=True):
             research_card(row['name'], row['code']+' · '+row['industry'], row['reason'], '长期观察' if row['period'] == '长期' else '研究线索')

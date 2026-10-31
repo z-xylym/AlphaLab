@@ -56,6 +56,12 @@ def seed(auth, token):
                                     'analysis':['仅验证报告排版；不生成真实研究或投资结论。'],
                                     'missing_data':['实时价格、PE/PB未提供。']} for title in SECTIONS]})
     repo.put('research_reports',request_key(context,'deepseek-chat'),payload(context,answer,'deepseek-chat',now().isoformat()))
+    from alphalab.company_report import SUMMARY_FIELDS, summary_key, summary_payload
+    summary = {key: '合成浏览器夹具；资料不足，仅验证排版。' for key in SUMMARY_FIELDS}
+    summary.update(opinion='数据不足', facts=['合成资料，非真实披露；测试源；2025-12-31'],
+                   risks=['真实资料缺失'], change_conditions=['获得新的可核对资料'])
+    repo.put('research_reports', summary_key(context, 'deepseek-chat'),
+             summary_payload(context, json.dumps({'summary': summary}), 'deepseek-chat', now().isoformat()))
 
 
 
@@ -73,18 +79,29 @@ def main():
     token = auth.login('13800000009', password)
     seed(auth, token)
     helper = output/'offline_app.py'
-    helper.write_text('''import streamlit as st
-from alphalab import provider
+    helper.write_text('''import json
+from pathlib import Path
+import streamlit as st
+from alphalab import provider, data
+from alphalab.ai_provider import DeepSeekClient
 from alphalab.ui import main
+counts_path = Path(__file__).with_name('outbound-attempts.json')
+if not counts_path.exists():counts_path.write_text('[]')
 def denied(*a, **k):
+    counts = json.loads(counts_path.read_text())
+    counts.append('external_call_attempt')
+    counts_path.write_text(json.dumps(counts))
     raise RuntimeError("Browser test forbids upstream calls")
 provider.call = denied
+data.fetch_policy_index = denied
+DeepSeekClient.complete = denied
 st.html('<div style="position:fixed;bottom:0;left:0;right:0;text-align:center;background:#fff8e8;color:#6d542d;font-size:11px;z-index:9999;padding:3px">浏览器布局测试 · 隔离夹具，非生产行情或投资结论</div>')
 main()
 ''')
     env = os.environ.copy()
     env.update(DATABASE_URL=url, APP_SECRET_KEY=settings.app_secret_key, PYTHONPATH=str(ROOT),
                STREAMLIT_BROWSER_GATHER_USAGE_STATS='false')
+    (output/'outbound-attempts.json').write_text('[]')
     log = (output/'browser-server.log').open('w')
     process = subprocess.Popen([sys.executable, '-m', 'streamlit', 'run', str(helper),
                                 '--server.address', '127.0.0.1', '--server.port', '8502'],
@@ -100,12 +117,14 @@ main()
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(executable_path='/usr/bin/chromium', args=['--no-sandbox'])
             results = []
-            for width in (1440, 390, 430):
+            frontend_external = []
+            for width in (1440, 430, 390):
                 # Reset only this disposable fixture user's preferences/watchlist for each first-visit run.
                 fixture_repo=Repository(auth,token)
                 fixture_repo.remove('user_preferences','profile')
                 fixture_repo.remove('watchlist_items')
                 page = browser.new_page(viewport={'width': width, 'height': 1000 if width == 1440 else 844})
+                page.on('request', lambda request: frontend_external.append(request.url) if not request.url.startswith(('http://127.0.0.1:', 'ws://127.0.0.1:', 'data:', 'blob:')) else None)
                 timings = {}
                 def ready():
                     page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state') === 'notRunning'""", timeout=20000)
@@ -174,6 +193,9 @@ main()
                 page.get_by_role('button', name='阅读报告', exact=True).first.click()
                 ready()
                 from alphalab.company_report import SECTIONS
+                page.get_by_role('heading',name='精简研究摘要',exact=True).wait_for(timeout=20000)
+                capture('summary-library')
+                page.get_by_role('button', name='阅读报告', exact=True).nth(1).click()
                 page.get_by_role('heading',name=SECTIONS[0],exact=True).wait_for(timeout=20000)
                 ready()
                 for title in SECTIONS:
@@ -190,6 +212,10 @@ main()
                 capture('industry-bank')
                 page.locator('.st-key-industry_open_000001 button').click()
                 page.get_by_role('heading',name='示例银行（隔离夹具）',exact=True).wait_for()
+                research_tab('走势')
+                page.get_by_role('button', name='获取走势', exact=True).wait_for()
+                assert page.locator('[data-testid="stPlotlyChart"]').count() == 0
+                capture('lazy-history-empty')
                 nav('个股')
                 page.get_by_role('textbox', name='股票名称或代码', exact=True).fill('600519')
                 started = time.perf_counter()
@@ -212,6 +238,10 @@ main()
                 capture('stock-business')
                 research_tab('AI研究')
                 page.get_by_role('button', name='生成AI研究', exact=True).wait_for()
+                page.get_by_role('heading',name='精简研究摘要',exact=True).wait_for(timeout=20000)
+                page.get_by_role('button',name='生成完整研究依据',exact=True).wait_for()
+                capture('stock-summary')
+                page.get_by_text('完整研究依据',exact=True).click()
                 page.get_by_role('heading',name=SECTIONS[0],exact=True).wait_for(timeout=20000)
                 ready()
                 for title in SECTIONS:
@@ -238,6 +268,12 @@ main()
                                 'button_touch_height': '>=44px', 'fixture_only': True, **timings})
                 page.close()
             browser.close()
+        attempts = json.loads((output/'outbound-attempts.json').read_text())
+        assert not attempts, f'Unexpected external requests: {len(attempts)}'
+        assert not frontend_external, f'Unexpected frontend external requests: {len(frontend_external)}'
+        for result in results:
+            result['backend_external_attempts'] = len(attempts)
+            result['frontend_external_requests'] = len(frontend_external)
         (output/'terminal-results.json').write_text(json.dumps(results, ensure_ascii=False, indent=2))
         print(json.dumps(results, ensure_ascii=False))
     finally:

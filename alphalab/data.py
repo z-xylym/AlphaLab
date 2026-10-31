@@ -325,6 +325,6 @@ def read_home_sections(data,refresh=False):
         try:result=getattr(data,name)(refresh=True) if refresh and name in ('indices','policies') else getattr(data,name)()
         except Exception as exc:result=exc
         return {'result':result,'elapsed_seconds':round(time.monotonic()-start,3)}
-    names=('indices','policies') if refresh else ('indices','spot','policies')
+    names=('indices','policies')
     with ThreadPoolExecutor(max_workers=3) as executor:
         return dict(zip(names,executor.map(read,names)))

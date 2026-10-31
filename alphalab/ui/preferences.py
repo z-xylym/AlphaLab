@@ -1,13 +1,13 @@
 """Private preferences reused by first-visit onboarding and account settings."""
 import streamlit as st
 from ..personalization import INTERESTS, PERIODS, industry_catalog
-from .reads import remember
+from .reads import cached_catalog
 from .components import section_intro
 
 
 def preferences_form(repo, data, profile=None, onboarding=False):
     profile = profile or {}
-    catalog = remember('industry_catalog', lambda: industry_catalog(data.db))
+    catalog, _ = cached_catalog(data.db)
     choices = sorted(set(INTERESTS) | set(catalog['industries']) | set(profile.get('industries', [])))
     if onboarding:
         section_intro('WELCOME TO ALPHALAB', '先告诉我们，你想研究什么', '选几个关注方向，首页会解释哪些公司值得你进一步了解。随时可在“我的”修改。')

@@ -71,11 +71,29 @@ def fmt(value, suffix=''):
     return '—' if n is None else f'{n:,.2f}{suffix}'
 
 
+def financial_value(name, value, label):
+    """Presentation only. Convert only explicitly labelled yuan amounts."""
+    n = number(value)
+    if n is None:return '—'
+    if name in ('ROE', '毛利率', '资产负债率'):return fmt(n, ' %')
+    normalized = str(label).replace('（', '(').replace('）', ')')
+    if normalized.endswith('(元)'):
+        if abs(n) >= 100000000:return fmt(n / 100000000, ' 亿元')
+        if abs(n) >= 10000:return fmt(n / 10000, ' 万元')
+        return fmt(n, ' 元')
+    return fmt(n)
+
+
+def financial_tone(name, value):
+    n = number(value)
+    return 'risk' if name in ('净利润', 'ROE', '经营现金流') and n is not None and n < 0 else ''
+
+
 def metric_grid(items, columns=3):
     """(label, value, subtext, direction) tuples; no untrusted markup."""
     cells = []
     for label, value, subtext, direction in items:
-        tone = direction if direction in ('up','down','neutral') else ('neutral' if str(value)=='—' else '')
+        tone = direction if direction in ('up','down','neutral','risk') else ('neutral' if str(value)=='—' else '')
         note=escape(str(subtext))
         if tone and re.match(r'[+-]\d',str(subtext)):
             first,sep,rest=str(subtext).partition(' · ')

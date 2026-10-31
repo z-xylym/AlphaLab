@@ -73,3 +73,9 @@ class CachedResearch(MarketData):
         if result is None:
             raise DataUnavailable('尚未取得日线。')
         return result
+
+
+def cached_catalog(db):
+    from ..personalization import data_version, industry_catalog
+    version = data_version(db, ('master:', 'members:False:', 'sectors:False', 'spot:v1'))
+    return remember(('industry_catalog', version), lambda: industry_catalog(db), ttl=1800), version

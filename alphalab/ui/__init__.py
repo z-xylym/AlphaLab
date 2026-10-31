@@ -41,13 +41,13 @@ def main():
                     page = st.radio('导航', NAVIGATION,
                                     horizontal=True, label_visibility='collapsed', key='navigation')
         if page == '首页':
-            home(data, repo, ai, pref['level'])
+            home(data, repo, ai, pref.get('level', '零基础'), profile=pref)
         elif page == '市场':
             market(data, repo, ai, pref['level'])
         elif page == '自选':
             watchlist(data, repo)
         elif page == 'AI研究':
-            research_library(repo)
+            research_library(repo, ai, data)
         elif page == '个股':
             stock_research(data, repo, ai, pref['level'])
         else:
