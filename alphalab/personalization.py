@@ -1,13 +1,23 @@
 """Explainable cache-only discovery. No AI classification, price predictions or network calls."""
 import re
 from collections import defaultdict
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from .db import cache
 from .data import MarketData, DataUnavailable
 
 PERIODS = ('短期', '中期', '长期', '都看看')
 INTERESTS = ('食品饮料', '银行', '医药生物', '电子', '计算机', '机械设备', '公用事业', '汽车', '电力设备', '基础化工', '交通运输')
 UNKNOWN = {'', '暂无可靠数据', '未知', '不详', 'nan', 'None', '—'}
+
+
+def data_version(db, prefixes):
+    """Payload-free cache version; include expiration transitions and deletions."""
+    from .db import now
+    condition = or_(*(cache.c.key.startswith(prefix) for prefix in prefixes))
+    with db.connect() as conn:
+        row = conn.execute(select(func.count(), func.max(cache.c.fetched_at),
+            func.max(cache.c.expires_at), func.count().filter(cache.c.expires_at <= now())).where(condition)).first()
+    return tuple(str(value) for value in row)
 
 
 def industry_catalog(db):

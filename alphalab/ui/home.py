@@ -43,21 +43,22 @@ def market_overview(data):
     return policies
 
 
-def home(data, repo, ai, level):
+def home(data, repo, ai, level, profile=None):
     from .workspace import watch_cards, report_cards
     from .preferences import preferences_form
-    profile=repo.get('user_preferences','profile',{})
+    profile = profile if profile is not None else repo.get('user_preferences','profile',{})
     if not profile.get('onboarding_completed'):
         preferences_form(repo,data,profile,onboarding=True)
     section_intro('YOUR PRIVATE RESEARCH SPACE', '让研究，井然有序。', '关注真实数据，沉淀独立判断。你的公司观察与研究记录，都在这里。')
     from .recommendations import recommendations
-    recommendations(data,repo)
+    watched = repo.list('watchlist_items')
+    recommendations(data,repo,profile=profile,watched=watched)
     policies = market_overview(data)
     with st.container(key='home_personal'):
         left, right = st.columns(2, gap='large')
         with left:
             st.subheader('我的自选')
-            watch_cards(data, repo, limit=3, prefix='home_watch')
+            watch_cards(data, repo, limit=3, prefix='home_watch', records=watched[:3])
         with right:
             st.subheader('最近研究')
             report_cards(repo, limit=3, prefix='home_report')

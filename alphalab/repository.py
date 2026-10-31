@@ -39,6 +39,38 @@ class Repository:
             if key is not None:
                 q = q.where(t.c.key == key)
             conn.execute(q)
+    def report_index(self, codes=None):
+        """Small user-scoped projection; never transfer report bodies for status badges."""
+        with self.db.begin() as conn:
+            user = self.auth.principal(conn, self.token)
+            t = private['research_reports']
+            code = t.c.payload['code'].astext
+            q = select(code.label('code'), t.c.payload['created_at'].astext.label('created_at')).where(
+                t.c.user_id == user['id'], code.isnot(None))
+            if codes is not None:q = q.where(code.in_(codes))
+            rows = conn.execute(q.distinct(code).order_by(code, t.c.updated_at.desc())).mappings()
+            result = {}
+            for row in rows:result.setdefault(row['code'], dict(row))
+            return result
+
+    def has_company_report(self, code):
+        with self.db.begin() as conn:
+            user = self.auth.principal(conn, self.token)
+            t = private['research_reports']
+            return conn.execute(select(t.c.key).where(t.c.user_id == user['id'],
+                t.c.payload['code'].astext == code).limit(1)).first() is not None
+
+    def latest_company_report(self, code, kind=None, context_fingerprint=None):
+        with self.db.begin() as conn:
+            user = self.auth.principal(conn, self.token)
+            t = private['research_reports']
+            q = select(t.c.payload).where(t.c.user_id == user['id'],
+                t.c.payload['code'].astext == code, t.c.payload['report'].isnot(None))
+            if kind == 'summary':q = q.where(t.c.payload['report'].has_key('summary'))
+            if kind == 'full':q = q.where(t.c.payload['report'].has_key('sections'))
+            if context_fingerprint:q = q.where(t.c.payload['context_fingerprint'].astext == context_fingerprint)
+            return conn.execute(q.order_by(t.c.updated_at.desc()).limit(1)).scalar()
+
     def memory(self, query, limit=8):
         terms = [x.lower() for x in query.split() if x]
         records = self.list('user_memories', limit=30) + self.list('research_reports', limit=30)

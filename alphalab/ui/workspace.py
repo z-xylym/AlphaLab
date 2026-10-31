@@ -6,13 +6,9 @@ from .navigation import open_stock, open_page
 from .reads import remember
 
 
-def watch_cards(data, repo, limit=100, prefix='watch'):
-    records = repo.list('watchlist_items', limit=limit)
-    reports = repo.list('research_reports', limit=100)
-    latest = {}
-    for record in reports:
-        report = record['payload']
-        if report.get('code'):latest.setdefault(report['code'], report)
+def watch_cards(data, repo, limit=100, prefix='watch', records=None):
+    records = records if records is not None else repo.list('watchlist_items', limit=limit)
+    latest = repo.report_index([r['payload']['code'] for r in records]) if records else {}
     # This method is already cache-only; never start a market provider from a watchlist.
     try:quotes = remember('watch_quotes', data.spot)
     except DataUnavailable:quotes = None
@@ -64,8 +60,8 @@ def report_cards(repo, limit=6, prefix='report', library=False):
     return records
 
 
-def research_library(repo):
-    from .report_view import render_report, followup_placeholder
+def research_library(repo, ai=None, data=None):
+    from .report_view import render_report, stock_followup
     section_intro('RESEARCH LIBRARY', 'AI研究', '从真实资料到可核对的观点。这里汇集你已保存的研究，不自动发起AI调用。')
     st.button('研究一家公司', type='primary', on_click=open_page, args=('个股',))
     query = st.text_input('检索研究报告', placeholder='公司名称、代码或研究主题')
@@ -81,7 +77,7 @@ def research_library(repo):
                           '生成于 '+date_label(report.get('created_at') or record['created_at']), '已保存')
             if st.button('阅读报告', key='library_read_'+str(i)):st.session_state['selected_report'] = record['key']
     selected = st.session_state.get('selected_report')
-    record = repo.get('research_reports', selected) if selected in {r['key'] for r in matches} else None
+    record = next((r['payload'] for r in matches if r['key'] == selected), None)
     if record:
         st.divider()
         if record.get('report'):render_report(record)
@@ -91,4 +87,9 @@ def research_library(repo):
             st.markdown(record.get('answer', ''))
         if record.get('code'):
             st.button('查看公司最新研究资料', on_click=open_stock, args=(record['code'], True))
-    followup_placeholder('library')
+        if ai and data and record.get('context_snapshot'):
+            from ..research_context import context_from_cache
+            from .reads import CachedResearch
+            stock = {k: v.get('value') for k, v in record['context_snapshot']['security'].items()}
+            context = context_from_cache(CachedResearch(data.db), stock)
+            stock_followup(ai, context, 'library_'+record['code'])

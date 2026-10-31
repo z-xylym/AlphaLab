@@ -71,7 +71,7 @@ def test_research_industry_screen_and_private_screens(system,monkeypatch):
     def company_report(self,context,regenerate=False):
         answer=json.dumps({'sections':[{'title':title,'facts':[],'analysis':['自动化测试夹具，非真实报告'],'missing_data':[]} for title in SECTIONS]})
         return payload(context,answer,self.settings.deepseek_model,now().isoformat()),False
-    monkeypatch.setattr(AI,'company_report',company_report)
+    monkeypatch.setattr(AI,'company_summary',company_report)
     monkeypatch.setenv('DEEPSEEK_API_KEY','test-not-real-key')
     app.run(timeout=20)
     next(x for x in app.button if x.label=='生成AI研究').click().run(timeout=20)

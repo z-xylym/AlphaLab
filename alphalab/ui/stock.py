@@ -3,7 +3,8 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 from ..data import DataUnavailable, number
-from .components import data_meta, date_label, empty_state, fmt, metric_grid, chart_style, planned_panel
+from ..research_context import build_context
+from .components import data_meta, date_label, empty_state, fmt, metric_grid, chart_style, planned_panel, financial_value, financial_tone
 from .reads import CachedResearch, invalidate, remember
 
 GLOSSARY = {
@@ -26,18 +27,15 @@ def field(value):
 
 def financial_metrics(view, financial, compact=False):
     if not financial:
-        empty_state('财务数据待更新', '点击“更新研究数据”取得最新披露。')
+        empty_state('财务数据待更新', '通过当前页的独立获取入口取得最新披露。')
         return
     data_meta(financial)
-    summary = view.financial_summary(financial)
+    summary = build_context({'code': '', 'name': ''}, financial=financial)['financial_summary']
     metrics = []
     for name, item in list(summary.items())[:3 if compact else 6]:
-        unit = ' %' if name in ('ROE', '毛利率', '资产负债率') else ''
-        # Monetary units vary by source label. Do not infer a unit from magnitude.
-        label = next((str(row.get('指标')) for row in financial['items']
-                      if str(row.get('指标', '')).startswith(name)), name)
-        metrics.append((label, fmt(item['value'], unit),
-                        '报表期 '+field(item['report_date']), ''))
+        label = item.get('original_indicator') or name
+        metrics.append((label, financial_value(name, item['value'], label),
+                        '报表期 '+field(item['date']), financial_tone(name, item['value'])))
     metric_grid(metrics)
     if not compact:
         with st.expander('指标口径与原始摘要'):
@@ -45,6 +43,25 @@ def financial_metrics(view, financial, compact=False):
                 st.caption(name+' · '+description)
             st.caption('单位以原始指标名称为准；报表期不等于公告日，不用于历史财务选股回测。')
             st.dataframe(pd.DataFrame(financial['items']), hide_index=True, use_container_width=True)
+
+
+def fetch_independent(view, data, code, method, label, existing=None):
+    current = existing or optional(lambda: getattr(view, method)(code))
+    failed_key = '_fetch_failed_'+method+'_'+code
+    caption = ('重试获取' if st.session_state.get(failed_key) else '获取')+label
+    if not current or not current.get('items'):
+        if st.button(caption, key='fetch_'+method+'_'+code):
+            try:
+                with st.spinner('正在获取'+label+'…'):
+                    current = getattr(data, method)(code, refresh=True)
+                invalidate()
+                if not current or not current.get('items'):raise DataUnavailable('empty')
+                st.session_state.pop(failed_key, None)
+            except Exception:
+                st.session_state[failed_key] = True
+                st.warning(label+'暂不可用，可单独重试；其他资料不受影响。')
+                return None
+    return current if current and current.get('items') else None
 
 
 def stock_research(data, repo, ai, level):
@@ -88,8 +105,7 @@ def stock_research(data, repo, ai, level):
             if st.button('加入自选', key='watch_'+code):
                 repo.put('watchlist_items', code, {'code': code, 'name': stock['name']})
                 st.success('已加入自选')
-    reports=repo.list('research_reports',limit=100)
-    has_report=any(r['payload'].get('code')==code for r in reports)
+    has_report = repo.has_company_report(code)
     st.caption('研究状态 · '+('已有历史AI研究，可在AI研究页签核对' if has_report else '待形成公司研究'))
     data_meta(stock, price_missing=number(stock.get('price')) is None)
     if number(stock.get('price')) is not None:
@@ -114,30 +130,28 @@ def stock_research(data, repo, ai, level):
         else:
             st.caption('暂未取得新数据，保留已有记录。')
 
-    # Read existing public caches only; a missing price cannot block the other metrics.
-    quote_data=optional(lambda: remember('watch_quotes', view.spot))
-    quote=next((x for x in quote_data['items'] if x['code']==code),{}) if quote_data else {}
-    financial=optional(lambda: view.financials(code))
-    summary=view.financial_summary(financial) if financial else {}
-    change=number(quote.get('change_pct'))
-    tone='up' if change is not None and change>0 else 'down' if change is not None and change<0 else 'neutral'
-    core=[('已有价格',fmt(quote.get('price'),' 元'),'非实时 · 缺失不影响研究',''),
-          ('涨跌幅',fmt(change,'%'),'上次保存的行情' if quote else '暂无可靠快照',tone)]
-    for name in GLOSSARY:
-        item=summary.get(name,{})
-        unit=' %' if name in ('ROE','毛利率','资产负债率') else ''
-        core.append((name,fmt(item.get('value'),unit),'报表期 '+field(item.get('report_date')),''))
-    with st.container(key='core_metrics'):metric_grid(core,columns=4)
-
-    # A native radio styled as tabs provides true conditional execution in Streamlit 1.50.
+    # Radio tabs execute only the selected body. The header needs no report bodies or day bars.
     with st.container(key='research_tabs'):
         tab = st.radio('研究内容', ['概览', '走势', '财务', '主营', 'AI研究', '预警'], horizontal=True,
                        key='research_tab', label_visibility='collapsed')
+    financial = optional(lambda: view.financials(code)) if tab in ('概览', '财务') else None
+    if tab == '概览':
+        quote_data = optional(lambda: remember('watch_quotes', view.spot))
+        quote = next((x for x in quote_data['items'] if x['code'] == code), {}) if quote_data else {}
+        change = number(quote.get('change_pct'))
+        core = [('已有价格', fmt(quote.get('price'), ' 元'), '非实时 · 缺失不影响研究', ''),
+                ('涨跌幅', fmt(change, '%'), '已有行情快照',
+                 'up' if change is not None and change > 0 else 'down' if change is not None and change < 0 else 'neutral')]
+        contextual = build_context(stock, financial=financial)['financial_summary']
+        for name, item in contextual.items():
+            core.append((name, financial_value(name, item['value'], item.get('original_indicator')),
+                         '报表期 '+field(item['date']), financial_tone(name, item['value'])))
+        with st.container(key='core_metrics'):metric_grid(core, columns=4)
+
     if tab == '概览':
         info = optional(lambda: view.company(code))
         company = info['items'][0] if info else {}
-        history = optional(lambda: view.history(code))
-        latest = max((str(x['date']) for x in history['items']), default='—') if history else '—'
+        latest = max((str(x.get('date') or '') for x in contextual.values()), default='—')
         metric_grid([(label, field(value), '', '') for label, value in (
             ('上市时间', date_label(company.get('上市时间'))), ('所属行业', company.get('行业')),
             ('总股本', company.get('总股本')), ('最新数据日期', latest))], columns=4)
@@ -145,12 +159,9 @@ def stock_research(data, repo, ai, level):
             st.caption('顶部指标只读已有缓存，财务报告期与价格日期分别标注。完整财务请查看财务页签。')
             data_meta(info)
             data_meta(financial)
-            data_meta(history)
     elif tab == '走势':
-        history = optional(lambda: view.history(code))
-        if not history:
-            empty_state('日线数据待更新', '点击“更新研究数据”后查看走势。')
-            return
+        history = fetch_independent(view, data, code, 'history', '走势')
+        if not history:return
         data_meta(history)
         def chart_frame():
             frame = pd.DataFrame(history['items'])
@@ -165,11 +176,12 @@ def stock_research(data, repo, ai, level):
         with st.expander('数据口径与回测风险'):
             st.caption('未复权价格受分红送转影响，不代表实际投资回报；历史走势不预测未来。')
     elif tab == '财务':
-        financial_metrics(view, optional(lambda: view.financials(code)))
+        financial = fetch_independent(view, data, code, 'financials', '财务', existing=financial)
+        financial_metrics(view, financial)
     elif tab == '主营':
-        business = optional(lambda: view.business(code))
+        business = fetch_independent(view, data, code, 'business', '主营')
         if not business:
-            empty_state('主营数据待更新', '点击“更新研究数据”取得最新披露。')
+            empty_state('主营数据待更新', '通过当前页的独立获取入口取得最新披露。')
             return
         data_meta(business)
         frame = pd.DataFrame(business['items'])

@@ -27,7 +27,7 @@ def request_key(context, model, request_id=''):
 
 def parse_report(answer):
     value = json.loads(answer)
-    if not isinstance(value, dict) or set(value) != {'sections'}:raise ValueError('report shape')
+    if not isinstance(value, dict) or set(value) not in ({'sections'}, {'summary', 'sections'}):raise ValueError('report shape')
     sections = value['sections']
     if not isinstance(sections, list) or len(sections) != len(SECTIONS):raise ValueError('sections')
     for section, title in zip(sections, SECTIONS):
@@ -52,3 +52,56 @@ def payload(context, answer, model, created_at):
             'report_version': VERSION, 'context_fingerprint': fingerprint(context), 'data_cutoff': context['data_cutoff'],
             'context_snapshot': context, 'report': report, 'answer': markdown,
             'audit_note': '结构已校验；数值与语义尚需对照输入快照人工核验，模型分析不等于已验证事实'}
+
+SUMMARY_VERSION = 'company-summary-v1.2'
+SUMMARY_FIELDS = ('opinion', 'judgment', 'facts', 'short_term', 'medium_term', 'long_term',
+                  'holding_advice', 'not_holding_advice', 'risks', 'change_conditions')
+OPINIONS = ('偏积极', '中性观察', '偏谨慎', '数据不足')
+# Reuse the same grounding rules; replace only the output contract.
+GROUNDING = SYSTEM.split('输出JSON对象')[0]
+SUMMARY_SYSTEM = GROUNDING + '''输出JSON对象，只有summary字段；不得生成sections或九章报告。
+summary必须包含以下字段：
+opinion：只能是偏积极、中性观察、偏谨慎、数据不足之一；
+judgment：1～2句核心判断；facts：最多5条关键事实，标注来源与日期；
+short_term：短期观察；medium_term：中期经营；long_term：长期逻辑；
+holding_advice：已持有的研究观察建议；not_holding_advice：未持有的研究观察建议；
+risks：最多3条主要风险；change_conditions：最多3条判断改变条件。
+除facts、risks、change_conditions是字符串数组，其余字段均为字符串。
+建议只涉及核对资料、风险敞口与观察条件，禁止直接交易指令。数据不足直接说明，不补造事实。
+核心判断最多200字，其余单条最多160字，完整摘要最多约900汉字。'''
+
+
+def summary_key(context, model, request_id=''):
+    return hashlib.sha256(canonical({'version': SUMMARY_VERSION, 'context': fingerprint(context),
+                                    'model': model, 'request_id': request_id}).encode()).hexdigest()
+
+
+def parse_summary(answer):
+    value = json.loads(answer)
+    if not isinstance(value, dict) or set(value) != {'summary'}:raise ValueError('summary shape')
+    summary = value['summary']
+    if not isinstance(summary, dict) or set(summary) != set(SUMMARY_FIELDS):raise ValueError('summary fields')
+    if summary['opinion'] not in OPINIONS:raise ValueError('opinion')
+    for key in SUMMARY_FIELDS:
+        item = summary[key]
+        if key in ('facts', 'risks', 'change_conditions'):
+            if not isinstance(item, list) or len(item) > (5 if key == 'facts' else 3):raise ValueError('summary list')
+            if any(not isinstance(line, str) or not line.strip() or len(line) > 240 for line in item):raise ValueError('summary item')
+        elif not isinstance(item, str) or not item.strip() or len(item) > (300 if key == 'judgment' else 240):
+            raise ValueError('summary text')
+    return value
+
+
+def summary_payload(context, answer, model, created_at):
+    report = parse_summary(answer)
+    summary = report['summary']
+    labels = ('当前观点', '核心判断', '关键事实', '短期观察', '中期经营', '长期逻辑',
+              '已持有建议', '未持有建议', '主要风险', '判断改变条件')
+    markdown = '\n\n'.join('### '+label+'\n'+ ('\n'.join('- '+v for v in summary[key])
+                          if isinstance(summary[key], list) else summary[key])
+                          for key, label in zip(SUMMARY_FIELDS, labels))
+    return {'purpose': 'company_summary', 'question': context['security']['name']['value']+' '+context['security']['code']['value'],
+            'code': context['security']['code']['value'], 'created_at': created_at, 'provider': 'DeepSeek', 'model': model,
+            'report_version': SUMMARY_VERSION, 'context_fingerprint': fingerprint(context), 'data_cutoff': context['data_cutoff'],
+            'context_snapshot': context, 'report': report, 'answer': markdown,
+            'audit_note': '结构已校验；分析并非已验证事实，请核对来源、日期及数据缺口。'}

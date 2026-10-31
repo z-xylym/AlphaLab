@@ -110,14 +110,15 @@ def test_probe_is_single_endpoint_read_only_and_cooldown(monkeypatch):
 def test_home_reads_independent_sources_concurrently():
     from threading import Barrier
     from alphalab.data import read_home_sections, DataUnavailable
-    barrier=Barrier(3,timeout=3)
+    barrier=Barrier(2,timeout=3)
     class Data:
         def indices(self):barrier.wait();return {'items':[{'fixture':True}]}
-        def spot(self):barrier.wait();raise DataUnavailable('测试源不可用')
-        def policies(self):barrier.wait();return {'items':[]}
+        def spot(self):pytest.fail('Homepage must not read unused spot')
+        def policies(self):barrier.wait();raise DataUnavailable('测试源不可用')
     result=read_home_sections(Data())
     assert result['indices']['result']['items'][0]['fixture']
-    assert isinstance(result['spot']['result'],DataUnavailable)
+    assert isinstance(result['policies']['result'],DataUnavailable)
+    assert 'spot' not in result
     assert all(row['elapsed_seconds']>=0 for row in result.values())
 
 @pytest.mark.parametrize('category',['CONNECTED','secret-response-body'])

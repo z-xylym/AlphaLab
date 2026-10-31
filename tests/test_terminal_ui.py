@@ -137,7 +137,7 @@ def test_module_failure_does_not_block_other_panels_or_leak(system, monkeypatch)
         captured.append(context)
         answer=json.dumps({'sections':[{'title':title,'facts':[],'analysis':['测试报告，非投资建议'],'missing_data':[]} for title in SECTIONS]})
         return payload(context,answer,self.settings.deepseek_model,now().isoformat()),False
-    monkeypatch.setattr(AI, 'company_report', generate)
+    monkeypatch.setattr(AI, 'company_summary', generate)
     monkeypatch.setenv('DEEPSEEK_API_KEY','test-not-real-key')
     app.run(timeout=20)
     next(x for x in app.button if x.label == '生成AI研究').click().run(timeout=20)
@@ -204,8 +204,8 @@ def test_company_ai_keyless_no_automatic_calls_persistence_and_failure(system, m
         calls.append(json.loads(request.content))
         assert request.headers['Authorization']=='Bearer test-not-real-key'
         if fail[0]:return httpx.Response(500,text='PRIVATE_PROVIDER_BODY')
-        answer=json.dumps({'sections':[{'title':title,'facts':[], 'analysis':['UI隔离测试报告，非投资结论'],
-                                        'missing_data':['缺少实时价格']} for title in SECTIONS]})
+        from test_v12_research import summary_text
+        answer=summary_text('UI隔离测试报告，非投资结论')
         return httpx.Response(200,json={'choices':[{'message':{'content':answer},'finish_reason':'stop'}],
                                         'usage':{'prompt_tokens':100,'completion_tokens':200}})
     original=AI.__init__
@@ -223,10 +223,11 @@ def test_company_ai_keyless_no_automatic_calls_persistence_and_failure(system, m
     assert not calls
     next(x for x in app.button if x.label=='生成AI研究').click().run(timeout=20)
     assert not app.exception and not app.error and len(calls)==1
-    assert set(SECTIONS) <= {x.value for x in app.subheader}
+    assert '精简研究摘要' in {x.value for x in app.subheader}
+    assert not (set(SECTIONS) & {x.value for x in app.subheader})
     assert any('生成时间' in x.value for x in app.caption)
     app.run(timeout=20)
-    assert len(calls)==1 and set(SECTIONS) <= {x.value for x in app.subheader}
+    assert len(calls)==1 and '精简研究摘要' in {x.value for x in app.subheader}
     next(x for x in app.button if x.label=='生成AI研究').click().run(timeout=20)
     assert len(calls)==1
     next(x for x in app.button if x.label=='重新生成AI研究').click().run(timeout=20)
@@ -234,7 +235,8 @@ def test_company_ai_keyless_no_automatic_calls_persistence_and_failure(system, m
     fail[0]=True
     next(x for x in app.button if x.label=='重新生成AI研究').click().run(timeout=20)
     assert len(calls)==3 and app.warning and not app.exception and not app.error
-    assert set(SECTIONS) <= {x.value for x in app.subheader}
+    assert '精简研究摘要' in {x.value for x in app.subheader}
+    assert not (set(SECTIONS) & {x.value for x in app.subheader})
     assert 'PRIVATE_PROVIDER_BODY' not in '\n'.join(x.value for x in app.warning)
-    reports=[row['payload'] for row in user.list('research_reports') if row['payload'].get('purpose')=='company_report']
+    reports=[row['payload'] for row in user.list('research_reports') if row['payload'].get('purpose')=='company_summary']
     assert len(reports)==1 and reports[0]['context_snapshot']['security']['code']['value']=='600519'

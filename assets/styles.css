@@ -169,10 +169,10 @@ button:disabled { box-shadow: none !important; }
 .st-key-core_metrics .metric-sub { font-size: .66rem; }
 .st-key-company_header { border-left: 3px solid #B5A286; padding-left: 1rem; margin: .5rem 0 .2rem; }
 .st-key-research_tabs { margin-top: 1rem; }
-.st-key-ai_report { max-width: 920px; }
-.st-key-ai_report h3 { font-size: 1.22rem !important; }
-.st-key-ai_report [data-testid="stMarkdownContainer"] { line-height: 1.95; font-size: .94rem; }
-.st-key-ai_report [data-testid="stCaptionContainer"] p { letter-spacing: .06em; color: #8A795D; font-size: .65rem; }
+:is(.st-key-ai_report, .st-key-ai_full_report) { max-width: 920px; }
+:is(.st-key-ai_report, .st-key-ai_full_report) h3 { font-size: 1.22rem !important; }
+:is(.st-key-ai_report, .st-key-ai_full_report) [data-testid="stMarkdownContainer"] { line-height: 1.95; font-size: .94rem; }
+:is(.st-key-ai_report, .st-key-ai_full_report) [data-testid="stCaptionContainer"] p { letter-spacing: .06em; color: #8A795D; font-size: .65rem; }
 .empty-state { border: 1px dashed #CED8E3; background: #F8FAFC; border-radius: 12px; padding: 1.2rem; }
 @media (max-width: 640px) {
   .block-container { padding: 3.8rem .9rem 2rem; }
@@ -208,3 +208,6 @@ button:disabled { box-shadow: none !important; }
 }
 
 .metric-value.neutral, .metric-sub .neutral { color: var(--text-muted); }
+
+/* Restrained warning for negative operating metrics. */
+.metric-value.risk { color: #96665e; }
