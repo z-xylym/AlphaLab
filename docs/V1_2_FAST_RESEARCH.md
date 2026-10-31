@@ -1,7 +1,7 @@
 # AlphaLab V1.2 — Fast Research & AI Decision Assistant
 
 分支：`feature/v1.2-fast-research`。基线：`1362d4a57e529b92f7b2f61a91b3ce82ee01e04c`。
-本轮仅恢复指定功能；未 commit、push 或创建 PR。
+本轮实现快速研究摘要与单股票追问；通过验证后提交分支并创建 PR 到 main，等待审核，不自动合并。
 
 ## 功能与契约
 
@@ -43,9 +43,20 @@
 
 待本地与浏览器门禁完成后，运行 `.venv/bin/python -m scripts.validate_v12_ai`。脚本只使用显式合成 `000000` Context 和一次性本地数据库；不会连接环境中的生产 DATABASE_URL，不使用600519冒充真实资料；按摘要→追问顺序执行。保留真实 HTTP 状态、模型、耗时、tokens 及相对4532的参考总量差，失败不输出密钥、数据库连接或供应商正文。
 
-本地门禁全部通过后已执行该脚本，退出码2：`DEEPSEEK_API_KEY not configured`，真实API调用数0。当前运行实例无 DeepSeek 密钥绑定，网络允许列表也未包含 api.deepseek.com。已在开发环境配置草稿中保存 DEEPSEEK_API_KEY 要求及 api.deepseek.com 目的域名；草稿保存尚未应用到运行实例，也未发布。请在环境设置中安全配置并保存，使绑定及网络策略生效后继续本脚本。
+最新发布环境已确认 `DEEPSEEK_API_KEY` Secret 就绪且可由现有环境读取方式取得；`api.deepseek.com` 在已生效的允许域名中。未输出或保存真实凭据。
 
-本轮 summary-only 的真实耗时、input/output/total tokens、相对4532的下降量均**未取得，不能计算**；真实单股票追问同样**未执行**。模拟服务的追问隔离、预算、历史上限及失败保留测试已通过，不能等同于真实DeepSeek验收。旧4532 total 与旧追问4983 total 只是用户提供的参考，不能替代本轮验证。机器可读阻塞记录为 `test-results/v12-live-ai.json`。
+真实验证使用现有脚本的明确标记合成 Research Context（000000，非上市公司），仅连接一次性本地 PostgreSQL，不访问生产数据库。验证观察脚本、临时产物及真实 API 响应均保留在仓库外，未纳入版本控制。
+
+| 路径 | HTTP | 耗时 | input | output | total | 重试 | 请求模型 → 实际模型 |
+|---|---:|---:|---:|---:|---:|---|---|
+| 默认 summary-only | 200 | 7.234s | 3000 | 591 | 3591 | 无 | deepseek-chat → deepseek-flash |
+| V1.2 单股票追问 | 200 | 6.736s | 3669 | 805 | 4474 | 无 | deepseek-chat → deepseek-flash |
+
+相对旧参考 11.023s、2925 input、1607 output、4532 total，本次摘要 total 减少941（20.76%），耗时减少3.789s。旧请求 Context 未保存，此比较为参考总量比较，不是相同 Context 的严格性能对照。
+
+摘要通过现有 `parse_summary` schema 校验，只有 summary、不含 sections。两次真实输出均人工对照合成 Context 核验 grounding：没有从模型记忆补充公司事实，没有自行推导 PE/PB、市值或目标价，没有保证收益或直接买卖指令，明确说明缺失资料及合成性质。追问使用“如果我准备长期观察这家公司，最值得持续跟踪的三个指标是什么？”，请求 memory 为空，仅带当前 Context、精简摘要、用户研究偏好和有界历史，没有九章 sections。
+
+最终完整测试：`239 passed, 1 warning`（48.26s），warning 为 XDG_RUNTIME_DIR 临时目录回退。summary-only 与旧 summary+sections 阅读、相同 fingerprint 九章复用、无 sections 追问兼容性均通过。浏览器首次运行遇到表格定位器临时匹配多个元素，重跑后1440 / 430 / 390全部通过，前后端外部请求均为0。真实验证无需修改应用代码。
 
 ## 文件清单
 
